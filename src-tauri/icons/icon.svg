@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100">
+  <title>tide</title>
+  <defs>
+    <clipPath id="page">
+      <rect x="23" y="17" width="54" height="67" rx="5.94" ry="7.37"/>
+    </clipPath>
+  </defs>
+
+  <rect width="100" height="100" rx="24" fill="#174452"/>
+  <g clip-path="url(#page)">
+    <rect x="23" y="17" width="54" height="67" fill="#f8f8ee"/>
+    <rect x="32.72" y="31.74" width="32.94" height="3.35" rx="1.675" fill="#476c72"/>
+    <rect x="32.72" y="40.45" width="22.68" height="3.35" rx="1.675" fill="#476c72"/>
+
+    <svg x="23" y="51.84" width="54" height="32.16" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <path fill="#248c91" d="M0 25 C10 19 18 15 24 18 S40 30 48 35 S64 30 72 23 S88 14 100 23 V100 H0 Z"/>
+    </svg>
+    <svg x="23" y="61.22" width="54" height="22.78" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <path fill="#50d4cb" d="M0 29 C11 19 18 14 24 17 S40 31 48 39 S64 39 72 31 S88 13 100 20 V100 H0 Z"/>
+    </svg>
+  </g>
+</svg>
