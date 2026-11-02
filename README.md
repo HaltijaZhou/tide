@@ -46,6 +46,10 @@ npm run tauri build                 # 发布构建
 | Vite | MIT |
 | Vitest | MIT |
 
+## 更新日志
+
+见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## License
 
 [MIT](LICENSE)
