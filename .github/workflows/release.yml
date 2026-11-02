@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 tag（例如 v0.1.0-rc.1）'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 打包并发布（Windows）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      # 统一取 tag：push tag 时用 ref_name，手动触发时用输入值
+      - name: 解析 tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *) echo "tag 必须以 v 开头，当前为：$TAG" >&2; exit 1 ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          case "$TAG" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # 防止 tag 与实际版本号不一致，打出一个版本号错误的安装包
+      - name: 校验版本号与 tag 一致
+        shell: bash
+        env:
+          EXPECT: ${{ steps.meta.outputs.version }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const expect = process.env.EXPECT;
+            const found = {
+              "package.json": JSON.parse(fs.readFileSync("package.json", "utf8")).version,
+              "src-tauri/tauri.conf.json": JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")).version,
+              "src-tauri/Cargo.toml": fs.readFileSync("src-tauri/Cargo.toml", "utf8").match(/^version = "(.*)"/m)[1],
+            };
+            const bad = Object.entries(found).filter(([, v]) => v !== expect);
+            if (bad.length) {
+              console.error(`版本号与 tag 不一致：期望 ${expect}`);
+              for (const [file, v] of bad) console.error(`  ${file}: ${v}`);
+              process.exit(1);
+            }
+            console.log(`版本号一致：${expect}`);
+          '
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 构建产物
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 打包并发布
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: 'oh-my-mark ${{ steps.meta.outputs.tag }}'
+          releaseDraft: false
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          # MSI(WiX) 要求预发布标识必须是纯数字且 ≤65535，rc.1 这类版本打不出来，
+          # 所以预发布只出 NSIS；正式版才同时出 NSIS + MSI
+          args: ${{ steps.meta.outputs.prerelease == 'true' && '--bundles nsis' || '' }}
+          releaseBody: |
+            轻量级单文件 Markdown 编辑器，Typora 式即编即显，完全离线可用。
+
+            ### Windows 安装包
+            - `oh-my-mark_*_x64-setup.exe` —— NSIS 安装包（推荐）
+
+            预发布版本只提供 NSIS 安装包：MSI 要求预发布标识为纯数字，`rc.N` 无法打包；
+            正式版会同时提供 MSI。
+
+            安装包未做代码签名，首次运行时 Windows SmartScreen 可能提示「未知发布者」，
+            选择「更多信息 → 仍要运行」即可。
+
+            ### 校验
+            本版本通过 CI 的 TypeScript 类型检查、前端单元测试与 Rust 单元测试。
