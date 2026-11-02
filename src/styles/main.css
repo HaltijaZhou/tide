@@ -13,11 +13,15 @@ body { font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
 .vditor-toolbar { display: none !important; }
 .vditor { border: none !important; }
 
-/* 居中 720px 行宽排版 */
+/* 幕布铺满窗口，正文居中 720px 行宽。
+   .vditor-reset 自身既是幕布（有背景色）又是滚动容器，若用 max-width 居中，
+   窗口放大后两侧会露出 body 底色、滚动条也卡在 720px 栏边。
+   改用对称 padding 收窄正文：左侧至少 52px，以容纳 Vditor 标题标记的
+   float:left + margin-left:-29px，否则标记会被 .vditor-reset 的 overflow 裁掉。 */
 .vditor-reset {
-  max-width: 720px !important;
-  margin: 0 auto !important;
-  padding: 32px 24px 96px !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 32px max(52px, calc((100% - 720px) / 2)) 96px !important;
   font-size: 16px !important;
   line-height: 1.75 !important;
 }
