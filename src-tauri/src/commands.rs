@@ -1,5 +1,6 @@
 use notify::{RecursiveMode, Watcher, recommended_watcher};
 use serde::Serialize;
+use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -34,7 +35,48 @@ pub fn open_file(path: String) -> Result<OpenedFile, String> {
     })
 }
 
+/// 从启动参数里挑出要打开的文件：跳过程序自身（调用方已 skip）、跳过 `-` 开头的开关
+/// （如 macOS 的 `-psn_0_123`），只接受真实存在的文件。
+pub fn file_arg_from<I: IntoIterator<Item = OsString>>(args: I) -> Option<PathBuf> {
+    args.into_iter()
+        .map(PathBuf::from)
+        .find(|candidate| {
+            !candidate.as_os_str().is_empty()
+                && !candidate.to_string_lossy().starts_with('-')
+                && candidate.is_file()
+        })
+        .map(|p| std::path::absolute(&p).unwrap_or(p))
+}
+
+/// 启动时随命令行传入的文件（双击文件 /「打开方式」/ 拖到图标都会走这里）。
+/// 前端启动后取走一次，取走即清空，避免重复打开。
+pub struct InitialFile(Mutex<Option<String>>);
+
+impl InitialFile {
+    pub fn new<I: IntoIterator<Item = OsString>>(args: I) -> Self {
+        Self(Mutex::new(
+            file_arg_from(args).map(|p| p.to_string_lossy().into_owned()),
+        ))
+    }
+
+    pub fn take(&self) -> Option<String> {
+        self.0.lock().unwrap().take()
+    }
+}
+
+impl Default for InitialFile {
+    fn default() -> Self {
+        Self(Mutex::new(None))
+    }
+}
+
+#[tauri::command]
+pub fn take_initial_file(state: tauri::State<InitialFile>) -> Option<String> {
+    state.take()
+}
+
 /// 原子写：先写同目录临时文件，再 rename 覆盖目标
+
 #[tauri::command]
 pub fn save_file(
     path: String,
@@ -519,5 +561,43 @@ mod tests {
     fn open_missing_file_fails() {
         let err = open_file("Z:/不存在/x.md".into()).unwrap_err();
         assert_eq!(err, "OPEN_FAILED");
+    }
+
+    #[test]
+    fn file_arg_picks_the_existing_file_and_skips_flags() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("笔记.md");
+        fs::write(&path, "# hi").unwrap();
+        let args = vec![
+            OsString::from("--inspect"),
+            OsString::from("-psn_0_123"),
+            path.clone().into_os_string(),
+        ];
+        assert_eq!(
+            file_arg_from(args),
+            Some(std::path::absolute(&path).unwrap())
+        );
+    }
+
+    #[test]
+    fn file_arg_ignores_missing_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = vec![dir.path().join("不存在.md").into_os_string()];
+        assert_eq!(file_arg_from(args), None);
+    }
+
+    #[test]
+    fn file_arg_is_none_without_arguments() {
+        assert_eq!(file_arg_from(Vec::new()), None);
+    }
+
+    #[test]
+    fn initial_file_is_consumed_only_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.md");
+        fs::write(&path, "old").unwrap();
+        let state = InitialFile::new(vec![path.into_os_string()]);
+        assert!(state.take().is_some());
+        assert!(state.take().is_none());
     }
 }

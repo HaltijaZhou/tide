@@ -29,6 +29,7 @@ const app = vi.hoisted(() => ({
   statusRight: undefined as { textContent: string } | undefined,
   title: '',
   destroyed: false,
+  startupFile: null as string | null,
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -51,6 +52,11 @@ vi.mock('@tauri-apps/api/core', () => ({
       app.watchCount += 1
       if (app.holdWatch) await app.holdWatch
       if (app.failWatch) throw 'WATCH_FAILED'
+    }
+    if (command === 'take_initial_file') {
+      const path = app.startupFile
+      app.startupFile = null // 只交付一次
+      return path
     }
   },
 }))
@@ -132,6 +138,7 @@ beforeEach(async () => {
   app.title = ''
   app.destroyed = false
   app.watchCount = 0
+  app.startupFile = null
   const elements = new Map([
     ['#status-left', new FakeElement()],
     ['#status-right', new FakeElement()],
@@ -157,6 +164,17 @@ afterEach(() => {
 })
 
 describe('桌面文件操作', () => {
+  it('启动参数带来的文件会在启动后直接打开', async () => {
+    app.startupFile = 'C:/b.md'
+    vi.resetModules()
+    await import('./main')
+    await settle()
+
+    expect(app.title).toBe('b.md - oh-my-mark')
+    expect(app.statusRight!.textContent).toBe('字数 6')
+    expect(app.statusLeft!.textContent).toBe('已保存')
+  })
+
   it('打开文件后立即显示当前内容的字数', async () => {
     await drop('C:/a.md')
     expect(app.statusRight!.textContent).toBe('字数 3')

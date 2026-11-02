@@ -351,4 +351,9 @@ if (inTauri) {
     }
   })
   render()
+
+  // 启动参数带来的文件（双击 .md /「打开方式」/ 拖到图标）：应用启动时唯一的文件入口
+  void invoke<string | null>('take_initial_file').then((p) => {
+    if (p) void openPath(p)
+  })
 }
