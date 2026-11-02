@@ -8,22 +8,37 @@ export function initEditor(
   callbacks: { onInput: (markdown: string) => void; onReady: () => void },
 ): void {
   const media = window.matchMedia('(prefers-color-scheme: dark)')
+  const initialDark = media.matches
+  let ready = false
+  const applyTheme = () => {
+    if (!ready) return
+    vditor?.setTheme(
+      media.matches ? 'dark' : 'classic',
+      media.matches ? 'dark' : 'light',
+      media.matches ? 'github-dark' : 'github',
+    )
+  }
   vditor = new Vditor(container, {
     mode: 'ir',               // 即编即显
     lang: 'zh_CN',
     height: '100%',
     cache: { enable: false }, // 单文件模型：禁用 localStorage 缓存
     cdn: '/vditor',           // 运行时资源（Lute/i18n/图标/主题 CSS）本地化，离线可用
-    theme: media.matches ? 'dark' : 'classic',
-    preview: { theme: { current: media.matches ? 'dark' : 'light' } }, // 正文区主题与外壳一致
+    theme: initialDark ? 'dark' : 'classic',
+    preview: {
+      theme: { current: initialDark ? 'dark' : 'light' },
+      hljs: { style: initialDark ? 'github-dark' : 'github' },
+    }, // 正文与代码高亮均跟随系统
     toolbar: [],
     input: (value) => callbacks.onInput(value),
-    after: () => callbacks.onReady(),
+    after: () => {
+      ready = true
+      if (media.matches !== initialDark) applyTheme()
+      callbacks.onReady()
+    },
   })
-  // 暗色跟随系统：运行时切换外壳主题 + 内容主题（内容主题必须单独切，否则暗壳白芯）
-  media.addEventListener('change', () => {
-    vditor?.setTheme(media.matches ? 'dark' : 'classic', media.matches ? 'dark' : 'light')
-  })
+  // 运行时同时切换外壳、正文和代码高亮，避免暗色背景中出现亮色代码块。
+  media.addEventListener('change', applyTheme)
 }
 
 export function getMarkdown(): string {

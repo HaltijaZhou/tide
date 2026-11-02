@@ -1,4 +1,6 @@
 import './styles/main.css'
+import './styles/tokens.css'
+import './styles/tide.css'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -252,7 +254,7 @@ function showConflict(message = '文件已被外部修改：') {
   statusLeft.dataset.status = 'conflict'
   statusLeft.textContent = message
   const overwrite = document.createElement('button')
-  overwrite.textContent = '以磁盘版本覆盖'
+  overwrite.textContent = '使用磁盘版本（丢弃当前修改）'
   const failure = document.createElement('span')
   overwrite.onclick = async () => {
     const path = session.getState().path!
@@ -282,7 +284,7 @@ function showConflict(message = '文件已被外部修改：') {
     }
   }
   const keep = document.createElement('button')
-  keep.textContent = '保留我的版本'
+  keep.textContent = '保留当前内容（覆盖磁盘版本）'
   keep.onclick = () => {
     conflictActive = false
     render()

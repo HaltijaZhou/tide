@@ -1,0 +1,43 @@
+/* Hallmark · theme: custom · idea: quiet paper with a tidal accent · scope: app screen · v2.0.0 */
+/* Critique: Tide's single document stays central; accent colors signal structure and interaction. */
+:root {
+  color-scheme: light;
+  --tide-canvas: #f7f9f6;
+  --tide-ink: #263733;
+  --tide-muted: #516661;
+  --tide-accent: #126d70;
+  --tide-border: #dce7e1;
+  --tide-surface: #eaf1ed;
+  --tide-surface-hover: #dbece4;
+  --tide-selection: #cfe6dd;
+  --tide-error: #a33d33;
+  --tide-warning: #80511a;
+  --tide-callout-tip: #316b50;
+  --tide-callout-important: #68518a;
+  --tide-code-builtin: #9a4812;
+  --tide-code-section: #005cc5;
+  --tide-code-addition: #196b34;
+  --tide-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --tide-font-mono: ui-monospace, 'Cascadia Code', Consolas, 'Courier New', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --tide-canvas: #162321;
+    --tide-ink: #d9e7e2;
+    --tide-muted: #a1b9b0;
+    --tide-accent: #80c9bc;
+    --tide-border: #354b45;
+    --tide-surface: #213632;
+    --tide-surface-hover: #2b4840;
+    --tide-selection: #33564c;
+    --tide-error: #eea49a;
+    --tide-warning: #e9c28c;
+    --tide-callout-tip: #94cbaa;
+    --tide-callout-important: #c8b4e3;
+    --tide-code-builtin: #ffa657;
+    --tide-code-section: #79c0ff;
+    --tide-code-addition: #aff5b4;
+  }
+}

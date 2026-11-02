@@ -1,0 +1,214 @@
+/* Hallmark · theme: custom · idea: quiet paper with a tidal accent · scope: app screen · v2.0.0 */
+/* Critique: preserve the full-width editor and its existing single-document workflow. */
+/* answered F3: Editable headings retain normal wrapping so the caret does not rebalance while typing. */
+/* answered F23: This document is a desktop application shell, not a search result. */
+html, body {
+  overflow-x: clip;
+}
+
+body {
+  background: var(--tide-canvas);
+  color: var(--tide-ink);
+  font-family: var(--tide-font);
+}
+
+#editor {
+  min-height: 0;
+}
+
+/* Vditor sets these on its root, including again for its dark theme. */
+#editor.vditor {
+  --border-color: var(--tide-border);
+  --second-color: var(--tide-muted);
+  --panel-background-color: var(--tide-canvas);
+  --textarea-background-color: var(--tide-canvas);
+  --textarea-text-color: var(--tide-ink);
+  --toolbar-background-color: var(--tide-surface);
+  --toolbar-icon-color: var(--tide-muted);
+  --toolbar-icon-hover-color: var(--tide-accent);
+  --heading-border-color: var(--tide-border);
+  --ir-heading-color: var(--tide-accent);
+  --ir-title-color: var(--tide-muted);
+  --ir-bi-color: var(--tide-muted);
+  --ir-link-color: var(--tide-accent);
+  --ir-paren-color: var(--tide-muted);
+  --ir-bracket-color: var(--tide-muted);
+  font-family: var(--tide-font);
+}
+
+/* Content themes load at runtime; the editor prefix keeps Tide's tokens in control. */
+#editor .vditor-reset {
+  --blockquote-border-color: var(--tide-accent);
+  --blockquote-text-color: var(--tide-muted);
+  --callout-note-color: var(--tide-accent);
+  --callout-tip-color: var(--tide-callout-tip);
+  --callout-important-color: var(--tide-callout-important);
+  --callout-warning-color: var(--tide-warning);
+  --callout-caution-color: var(--tide-error);
+  background-color: var(--tide-canvas);
+  color: var(--tide-ink);
+  font-family: var(--tide-font);
+  caret-color: var(--tide-accent);
+  padding: 48px max(52px, calc((100% - 720px) / 2)) 96px !important;
+}
+
+#editor .vditor-ir pre.vditor-reset:focus-visible {
+  box-shadow: inset 0 -2px 0 var(--tide-accent);
+}
+
+#editor .vditor-reset h1,
+#editor .vditor-reset h2,
+#editor .vditor-reset h3,
+#editor .vditor-reset h4,
+#editor .vditor-reset h5,
+#editor .vditor-reset h6 {
+  color: var(--tide-ink);
+  border-bottom: 0;
+  padding-bottom: 0;
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+#editor .vditor-reset h1 {
+  line-height: 1.35;
+}
+
+#editor .vditor-reset h2 {
+  font-size: 1.25em;
+  line-height: 1.45;
+}
+
+#editor .vditor-reset h3 { font-size: 1.125em; }
+#editor .vditor-reset h4 { font-size: 1.0625em; }
+#editor .vditor-reset h5 { font-size: 1em; }
+#editor .vditor-reset h6 { font-size: 0.9375em; }
+
+/* Vditor otherwise hides IR heading markers below 520px. */
+@media (max-width: 520px) {
+  #editor .vditor-ir .vditor-reset > h1::before { content: 'H1'; }
+  #editor .vditor-ir .vditor-reset > h2::before { content: 'H2'; }
+  #editor .vditor-ir .vditor-reset > h3::before { content: 'H3'; }
+  #editor .vditor-ir .vditor-reset > h4::before { content: 'H4'; }
+  #editor .vditor-ir .vditor-reset > h5::before { content: 'H5'; }
+  #editor .vditor-ir .vditor-reset > h6::before { content: 'H6'; }
+}
+
+#editor .vditor-reset blockquote:not(.callout) {
+  padding-left: 16px;
+}
+
+#editor .vditor-reset blockquote:not(.callout)::before {
+  width: 2px;
+  border-radius: 0;
+}
+
+#editor .vditor-reset .callout > .callout-info,
+#editor .vditor-reset .callout .callout-title {
+  opacity: 1;
+}
+
+#editor .vditor-reset a,
+#editor .vditor-ir__link,
+#editor .vditor-ir__node[data-type='link-ref'],
+#editor .vditor-ir__node[data-type='footnotes-ref'],
+#editor .vditor-toc span[data-type='toc-h'] {
+  color: var(--tide-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+#editor .vditor-reset code,
+#editor .vditor-reset pre,
+#editor .vditor-reset kbd,
+#editor .vditor-reset samp {
+  font-family: var(--tide-font-mono);
+}
+
+#editor .vditor-reset code:not(.hljs):not(.highlight-chroma) {
+  background-color: var(--tide-surface);
+}
+
+/* A few bundled highlight colors need stronger contrast on their code backgrounds. */
+#editor .vditor-reset .hljs-built_in,
+#editor .vditor-reset .hljs-symbol {
+  color: var(--tide-code-builtin);
+}
+
+#editor .vditor-reset .hljs-section {
+  color: var(--tide-code-section);
+}
+
+#editor .vditor-reset .hljs-addition {
+  color: var(--tide-code-addition);
+}
+
+#editor .vditor-reset::selection,
+#editor .vditor-reset ::selection {
+  background-color: var(--tide-selection);
+  color: var(--tide-ink);
+}
+
+#editor .vditor-reset a:focus-visible,
+#statusbar button:focus-visible {
+  outline: 2px solid var(--tide-accent);
+  outline-offset: 2px;
+}
+
+#statusbar {
+  height: auto;
+  min-height: 32px;
+  flex: none;
+  gap: 8px;
+  padding: 4px 12px;
+  border-top: 1px solid var(--tide-border);
+  background: var(--tide-canvas);
+  color: var(--tide-muted);
+}
+
+#status-left {
+  display: flex;
+  flex: 1 1 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#status-right {
+  flex: none;
+  white-space: nowrap;
+}
+
+#statusbar button {
+  min-height: 28px;
+  margin-left: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--tide-muted);
+  border-radius: 4px;
+  background: var(--tide-surface);
+  color: var(--tide-accent);
+  font-family: var(--tide-font);
+  line-height: 1.4;
+}
+
+#statusbar button:hover:not(:disabled) {
+  background: var(--tide-surface-hover);
+}
+
+#statusbar button:active:not(:disabled) {
+  background: var(--tide-selection);
+}
+
+#statusbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+#status-left[data-status='error'] {
+  color: var(--tide-error);
+}
+
+#status-left[data-status='conflict'] {
+  color: var(--tide-warning);
+}

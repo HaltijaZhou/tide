@@ -431,6 +431,21 @@ describe('桌面文件操作', () => {
     expect(app.editorText).toBe('# 本地修改')
   })
 
+  it('冲突选项说明各自会丢弃或覆盖哪份内容', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 本地修改'
+    app.input!(app.editorText)
+    app.files.set('C:/a.md', '# 外部修改')
+    app.changed!()
+    await settle()
+
+    const [useDisk, keepCurrent] = app.statusLeft!.children
+    expect(useDisk.textContent).toContain('使用磁盘版本')
+    expect(useDisk.textContent).toContain('丢弃当前修改')
+    expect(keepCurrent.textContent).toContain('保留当前内容')
+    expect(keepCurrent.textContent).toContain('覆盖磁盘版本')
+  })
+
   it('外部变更仍在读取时不会抢先自动保存', async () => {
     await drop('C:/a.md')
     app.editorText = '# 本地修改'
