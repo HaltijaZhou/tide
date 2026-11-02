@@ -15,6 +15,7 @@ vi.mock('vditor', () => ({
     setTheme(theme: string, contentTheme?: string, codeTheme?: string) { editor.themes.push([theme, contentTheme, codeTheme]) }
   },
 }))
+vi.mock('./details', () => ({ installDetailsFolding: () => () => {} }))
 
 afterEach(() => {
   editor.options = []

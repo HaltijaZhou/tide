@@ -1,7 +1,9 @@
 import Vditor from 'vditor'
 import 'vditor/dist/index.css'
+import { installDetailsFolding } from './details'
 
 let vditor: Vditor | null = null
+let resetDetailsFolding = () => {}
 
 export function initEditor(
   container: HTMLElement,
@@ -34,6 +36,7 @@ export function initEditor(
     after: () => {
       ready = true
       if (media.matches !== initialDark) applyTheme()
+      resetDetailsFolding = installDetailsFolding(container)
       callbacks.onReady()
     },
   })
@@ -46,6 +49,7 @@ export function getMarkdown(): string {
 }
 
 export function setMarkdown(value: string): void {
+  resetDetailsFolding()
   vditor?.setValue(value, true)
 }
 
