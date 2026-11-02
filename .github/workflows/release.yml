@@ -93,7 +93,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ steps.meta.outputs.tag }}
-          releaseName: 'oh-my-mark ${{ steps.meta.outputs.tag }}'
+          releaseName: 'tide ${{ steps.meta.outputs.tag }}'
           releaseDraft: false
           prerelease: ${{ steps.meta.outputs.prerelease }}
           # MSI(WiX) 要求预发布标识必须是纯数字且 ≤65535，rc.1 这类版本打不出来，
@@ -103,7 +103,7 @@ jobs:
             轻量级单文件 Markdown 编辑器，Typora 式即编即显，完全离线可用。
 
             ### Windows 安装包
-            - `oh-my-mark_*_x64-setup.exe` —— NSIS 安装包（推荐）
+            - `tide_*_x64-setup.exe` —— NSIS 安装包（推荐）
 
             预发布版本只提供 NSIS 安装包：MSI 要求预发布标识为纯数字，`rc.N` 无法打包；
             正式版会同时提供 MSI。

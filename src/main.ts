@@ -51,7 +51,7 @@ function render() {
   statusLeft.dataset.status = fileMissing || watchFailed ? 'error' : s.status
   if (inTauri) {
     const dot = s.status === 'dirty' || s.status === 'error' ? '● ' : ''
-    getCurrentWindow().setTitle(`${dot}${s.name} - oh-my-mark`)
+    getCurrentWindow().setTitle(`${dot}${s.name} - tide`)
   }
 }
 
@@ -131,7 +131,7 @@ async function saveCurrent(force = false) {
   let recreate = false
   if (fileMissing) {
     recreate = await ask('文件已被移动或删除，要在原位置重新创建吗？', {
-      title: 'oh-my-mark', kind: 'warning', okLabel: '重新创建', cancelLabel: '取消',
+      title: 'tide', kind: 'warning', okLabel: '重新创建', cancelLabel: '取消',
     })
     if (!recreate) return
     fileMissing = false
@@ -342,7 +342,7 @@ if (inTauri) {
       return
     }
     const save = await ask('有未保存的修改，保存后退出吗？', {
-      title: 'oh-my-mark', kind: 'warning', okLabel: '保存并退出', cancelLabel: '取消',
+      title: 'tide', kind: 'warning', okLabel: '保存并退出', cancelLabel: '取消',
     })
     if (save) {
       await saveCurrent()

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "oh-my-mark",
+  "productName": "tide",
   "version": "0.1.0",
-  "identifier": "dev.ohmymark.app",
+  "identifier": "dev.tide.editor",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "oh-my-mark",
+        "title": "tide",
         "width": 800,
         "height": 600
       }
@@ -28,7 +28,7 @@
     "fileAssociations": [
       {
         "ext": ["md", "markdown"],
-        "name": "ohmyMark",
+        "name": "tide",
         "description": "Markdown Document",
         "role": "Editor",
         "mimeType": "text/markdown"

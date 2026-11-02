@@ -170,7 +170,7 @@ describe('桌面文件操作', () => {
     await import('./main')
     await settle()
 
-    expect(app.title).toBe('b.md - oh-my-mark')
+    expect(app.title).toBe('b.md - tide')
     expect(app.statusRight!.textContent).toBe('字数 6')
     expect(app.statusLeft!.textContent).toBe('已保存')
   })
