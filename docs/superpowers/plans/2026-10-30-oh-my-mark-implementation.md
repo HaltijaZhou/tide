@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 构建轻量级单文件 markdown 编辑器（Typora 式即编即显），按设计文档 `docs/plans/2026-10-30-oh-my-mark-design.md` 实现。
+**Goal:** 构建轻量级单文件 markdown 编辑器（Typora 式即编即显），按设计文档 `docs/superpowers/specs/2026-10-30-oh-my-mark-design.md` 实现。
 
 **Architecture:** Tauri 2 壳（Rust 只做文件 IO/监视/对话框）+ vanilla TS 前端（Vditor IR 模式承担全部编辑体验）。前端文件状态机与 Tauri IPC 通过注入式适配器解耦，可脱离 Rust 在浏览器中先行开发与测试。
 
