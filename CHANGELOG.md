@@ -5,6 +5,45 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.3] - 2026-11-03
+
+打开 Markdown 时能正常显示相对于该文件的本地图片，图片链接的原有语义保持不变。
+
+### 新增
+
+- 本地图片显示：`![](images/a.png)` 这类相对路径此前一律显示不出来——WebView 会把它当成
+  应用页面的资源请求（构建预览里请求成 `http://127.0.0.1:4173/docs/images/...`，解码宽度为 0）。
+  新增 `src-tauri/src/local_images.rs`，以当前 Markdown 文件所在目录为基准解析图片路径，
+  只为实际被引用的那个文件调用 `asset_protocol_scope().allow_file`，再用 `convert_file_src`
+  换成 WebView 可加载的地址。不配置全磁盘静态访问范围，授权仅在本进程内有效
+- 路径覆盖 `./`、`../`、空格、中文与 URL 百分号编码，也支持本地绝对路径和本地 `file:` URL；
+  URL 的 `?`、`#` 仍作为查询与片段，文件名里的 `%3F`、`%23` 解码为文件名字符，不会重复解码
+- 新增 `src/images.ts`：用 `MutationObserver` 跟随 Vditor 新建和重绘的图片节点，
+  异步结果按文档版本、节点和原始地址三重校验，切换文档或改动链接后迟到的旧结果不会覆盖新状态；
+  引用式图片的引用定义变化时重算一次
+
+### 变更
+
+- 启用 Tauri `protocol-asset` feature，`app.security.assetProtocol` 打开且静态 scope 留空，
+  改由运行时按引用授权；新增 `percent-encoding` 与 `url` 依赖用于解码与 `file:` URL 解析
+- 只替换用于显示的 `img.src`，Markdown 原文与保存内容不变：以 Vditor 未改动图片地址时的
+  序列化结果为基准，`VditorIRDOM2Md` 往返一致
+- 当前文档路径随打开、切换、未命名文件首次保存成功、外部重载和「使用磁盘版本」同步更新；
+  浏览器开发模式（无 Tauri 外壳）不调用该命令
+- `http(s)`、协议相对地址、`data:`、`blob:` 等非本地来源不进入本地解析器，渲染行为不变
+
+### 修复
+
+- 相对路径的本地图片在编辑器里空白：现在按文档目录解析并显示
+- 图片缺失、无权限或格式不支持时保留原有替代文字，不阻塞编辑、保存、文件监视与退出；
+  一张图片解析失败不影响其他图片
+
+### 文档
+
+- README 增加两张软件截图，并在核心特性里补上图片显示
+- 新增计划文档 `docs/superpowers/plans/2026-11-03-local-image-rendering.md`
+- `docs/showcase.md` 的图片一行改为支持本地相对路径，不再是「仅 http(s) 地址」
+
 ## [0.1.2] - 2026-11-02
 
 引入「潮间」视觉主题，并让 Markdown 中的 `<details>` 折叠块在即编即显模式下真正折叠。
@@ -80,6 +119,7 @@
 - 完全离线可用：Vditor 的 Lute 引擎、图标与主题 CSS 全部本地化，不依赖 CDN
 - GitHub Actions 构建与发布流水线，产出 NSIS 与 MSI 安装包
 
+[0.1.3]: https://github.com/zhouhaltija/tide/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/zhouhaltija/tide/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/zhouhaltija/tide/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/zhouhaltija/tide/releases/tag/v0.1.0

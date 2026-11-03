@@ -39,6 +39,8 @@
 | Tauri | MIT / Apache-2.0 |
 | Vditor | MIT |
 | notify | MIT |
+| url | MIT / Apache-2.0 |
+| percent-encoding | MIT / Apache-2.0 |
 | tauri-plugin-dialog | MIT / Apache-2.0 |
 | Vite | MIT |
 | Vitest | MIT |
