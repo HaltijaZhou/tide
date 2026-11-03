@@ -1,14 +1,43 @@
 import Vditor from 'vditor'
 import 'vditor/dist/index.css'
 import { installDetailsFolding } from './details'
+import { installLocalImageRenderer } from './images'
 
 let vditor: Vditor | null = null
 let resetDetailsFolding = () => {}
+let imageRenderer: ReturnType<typeof installLocalImageRenderer> | null = null
+
+function currentMarkdownImageSources(container: HTMLElement): ReadonlyMap<HTMLImageElement, string> {
+  const sources = new Map<HTMLImageElement, string>()
+  if (!vditor?.vditor?.lute) return sources
+  const selector = '.vditor-ir__node[data-type="img"] > img'
+  const current = container.querySelectorAll<HTMLImageElement>(selector)
+  const template = document.createElement('template')
+  template.innerHTML = vditor.vditor.lute.Md2VditorIRDOM(vditor.getValue())
+  const parsed = template.content.querySelectorAll<HTMLImageElement>(selector)
+  if (current.length !== parsed.length) return sources
+  current.forEach((image, index) => {
+    const replacement = parsed[index]
+    const source = replacement.getAttribute('src')
+    if (source !== null && image.parentElement?.textContent === replacement.parentElement?.textContent) {
+      sources.set(image, source)
+    }
+  })
+  return sources
+}
 
 export function initEditor(
   container: HTMLElement,
-  callbacks: { onInput: (markdown: string) => void; onReady: () => void },
+  callbacks: {
+    onInput: (markdown: string) => void
+    onReady: () => void
+    resolveLocalImage?: (documentPath: string, source: string) => Promise<string>
+  },
 ): void {
+  imageRenderer?.dispose()
+  imageRenderer = callbacks.resolveLocalImage
+    ? installLocalImageRenderer(container, callbacks.resolveLocalImage, () => currentMarkdownImageSources(container))
+    : null
   const media = window.matchMedia('(prefers-color-scheme: dark)')
   const initialDark = media.matches
   let ready = false
@@ -51,6 +80,11 @@ export function getMarkdown(): string {
 export function setMarkdown(value: string): void {
   resetDetailsFolding()
   vditor?.setValue(value, true)
+  imageRenderer?.refresh()
+}
+
+export function setDocumentPath(path: string | null): void {
+  imageRenderer?.setDocumentPath(path)
 }
 
 export function focusEditor(): void {

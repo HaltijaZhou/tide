@@ -6,7 +6,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { open as openFileDialog, save as saveFileDialog, ask } from '@tauri-apps/plugin-dialog'
-import { initEditor, setMarkdown, focusEditor, getMarkdown } from './editor'
+import { initEditor, setMarkdown, setDocumentPath, focusEditor, getMarkdown } from './editor'
 import { createSession, type FsAdapter, type OpenedFile } from './file'
 
 const inTauri = '__TAURI_INTERNALS__' in window
@@ -18,6 +18,12 @@ const editorReady = new Promise<void>((resolve) => { resolveEditorReady = resolv
 let editorIsReady = false
 let editorValue = ''
 let savedEditorValue = ''
+let imageDocumentPath: string | null = null
+
+function setActiveDocumentPath(path: string) {
+  imageDocumentPath = path
+  setDocumentPath(path)
+}
 
 const tauriFs: FsAdapter = {
   async open(path: string): Promise<OpenedFile> {
@@ -89,6 +95,7 @@ session.save = async (force = false, expectedMissing = false) => {
   await externalCheck
   if (conflictActive || fileMissing) return
   const previousSaved = session.getSavedContent()
+  const savePath = session.getState().path
   await origSave(force, expectedMissing)
   if (session.getSavedContent() !== previousSaved) savedEditorValue = session.getSavedContent()
   if (session.getSaveError() === 'FILE_CONFLICT') {
@@ -99,6 +106,11 @@ session.save = async (force = false, expectedMissing = false) => {
     fileMissing = true
     render()
     return
+  }
+  if (savePath && session.getState().path === savePath
+    && !session.getSaveError() && imageDocumentPath !== savePath) {
+    setActiveDocumentPath(savePath)
+    await watchPath(savePath)
   }
   if (session.getState().status === 'error' && retryTimer === undefined) {
     retryTimer = setTimeout(() => {
@@ -138,7 +150,6 @@ async function saveCurrent(force = false) {
     if (!recreate) return
     fileMissing = false
   }
-  let newPath: string | undefined
   if (!session.getState().path) {
     const path = await saveFileDialog({
       defaultPath: '未命名.md',
@@ -146,13 +157,9 @@ async function saveCurrent(force = false) {
     })
     if (!path || session.getState().path) return
     session.setPathForNewFile(path)
-    newPath = path
   }
   syncEditor()
   await session.save(recreate || force, recreate)
-  if (newPath) {
-    await watchPath(newPath)
-  }
   syncEditor()
 }
 
@@ -168,6 +175,7 @@ async function openPath(path: string) {
   try {
     const beforeRead = getMarkdown()
     const r = await session.open(path, () => !conflictActive && !pendingExternalChecks && getMarkdown() === beforeRead)
+    setActiveDocumentPath(path)
     fileMissing = false
     watchFailed = false
     render()
@@ -264,11 +272,14 @@ function showConflict(message = '文件已被外部修改：') {
     try {
       const r = await invoke<OpenedFile>('open_file', { path })
       if (!conflictActive || session.getState().path !== path || getMarkdown() !== beforeRead) return
+      const needsWatch = imageDocumentPath !== path
+      if (needsWatch) setActiveDocumentPath(path)
       session.reload(r.content) // notify 触发的 render 因 conflictActive 被跳过
       displayMarkdown(r.content)
       renderWordCount(r.content)
       conflictActive = false
       render() // 重写 textContent，冲突按钮随之移除
+      if (needsWatch) await watchPath(path)
     } catch (e) {
       if (e === 'OPEN_FAILED') {
         conflictActive = false
@@ -293,7 +304,9 @@ function showConflict(message = '文件已被外部修改：') {
   statusLeft.append(overwrite, keep)
 }
 
-initEditor(editorEl, { onInput, onReady: () => {
+initEditor(editorEl, { onInput, resolveLocalImage: inTauri
+  ? (documentPath, source) => invoke<string>('resolve_document_image', { documentPath, source })
+  : undefined, onReady: () => {
   editorIsReady = true
   editorValue = getMarkdown()
   savedEditorValue = editorValue

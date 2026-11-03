@@ -1,4 +1,5 @@
 mod commands;
+mod local_images;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -12,7 +13,8 @@ pub fn run() {
             commands::save_file,
             commands::watch_file,
             commands::unwatch_file,
-            commands::take_initial_file
+            commands::take_initial_file,
+            local_images::resolve_document_image
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

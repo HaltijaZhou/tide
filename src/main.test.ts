@@ -14,6 +14,8 @@ const app = vi.hoisted(() => ({
   confirm: true,
   questions: 0,
   editorText: '',
+  imageDocumentPath: null as string | null,
+  imagePathAtLastRender: null as string | null,
   normalizeOnSet: false,
   deferReady: false,
   editorReady: true,
@@ -90,8 +92,12 @@ vi.mock('./editor', () => ({
     if (!app.deferReady) app.ready()
   },
   setMarkdown: (value: string) => {
-    if (app.editorReady) app.editorText = app.normalizeOnSet && !value.endsWith('\n') ? `${value}\n` : value
+    if (app.editorReady) {
+      app.editorText = app.normalizeOnSet && !value.endsWith('\n') ? `${value}\n` : value
+      app.imagePathAtLastRender = app.imageDocumentPath
+    }
   },
+  setDocumentPath: (path: string | null) => { app.imageDocumentPath = path },
   getMarkdown: () => app.editorText,
   focusEditor: () => {},
 }))
@@ -120,6 +126,8 @@ beforeEach(async () => {
   vi.resetModules()
   vi.useFakeTimers()
   app.files = new Map([['C:/a.md', '# 原文'], ['C:/b.md', '# 另一个文件']])
+  app.imageDocumentPath = null
+  app.imagePathAtLastRender = null
   app.failSave = false
   app.failWatch = false
   app.invalidUtf8 = false
@@ -164,6 +172,73 @@ afterEach(() => {
 })
 
 describe('桌面文件操作', () => {
+  it('打开和切换文档时使用当前文件作为图片的基准', async () => {
+    await drop('C:/a.md')
+    expect(app.imagePathAtLastRender).toBe('C:/a.md')
+    await drop('C:/b.md')
+    expect(app.imagePathAtLastRender).toBe('C:/b.md')
+  })
+
+  it('切换失败时保留原文档的图片基准', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 未保存'
+    app.input!(app.editorText)
+    app.failSave = true
+    await drop('C:/b.md')
+    expect(app.imageDocumentPath).toBe('C:/a.md')
+  })
+
+  it('新文档首次保存成功后启用所选路径作为图片基准', async () => {
+    app.savePath = 'C:/new.md'
+    app.editorText = '![图片](image.png)'
+    app.input!(app.editorText)
+    expect(app.imageDocumentPath).toBeNull()
+    app.keys!({ ctrlKey: true, metaKey: false, key: 's', preventDefault: () => {} })
+    await settle()
+    expect(app.imageDocumentPath).toBe('C:/new.md')
+  })
+
+  it('新文档首次保存失败后只在重试成功时启用图片基准', async () => {
+    app.savePath = 'C:/new.md'
+    app.failSave = true
+    app.editorText = '![图片](image.png)'
+    app.input!(app.editorText)
+    app.keys!({ ctrlKey: true, metaKey: false, key: 's', preventDefault: () => {} })
+    await settle()
+    expect(app.imageDocumentPath).toBeNull()
+
+    app.failSave = false
+    await vi.advanceTimersByTimeAsync(5000)
+    await settle()
+    expect(app.imageDocumentPath).toBe('C:/new.md')
+    expect(app.files.get('C:/new.md')).toBe('![图片](image.png)')
+  })
+
+  it('新文档保存冲突后使用磁盘版本会启用图片基准和文件监视', async () => {
+    app.savePath = 'C:/a.md'
+    app.editorText = '![新图片](new.png)'
+    app.input!(app.editorText)
+    app.keys!({ ctrlKey: true, metaKey: false, key: 's', preventDefault: () => {} })
+    await settle()
+    expect(app.imageDocumentPath).toBeNull()
+    expect(app.statusLeft!.children).toHaveLength(2)
+
+    await app.statusLeft!.children[0].onclick!()
+    await settle()
+    expect(app.editorText).toBe('# 原文')
+    expect(app.imagePathAtLastRender).toBe('C:/a.md')
+    expect(app.watchCount).toBe(1)
+  })
+
+  it('外部重载后仍使用当前文件作为图片基准', async () => {
+    await drop('C:/a.md')
+    app.files.set('C:/a.md', '![外部图片](image.png)')
+    app.changed!()
+    await settle()
+    expect(app.imagePathAtLastRender).toBe('C:/a.md')
+    expect(app.editorText).toBe('![外部图片](image.png)')
+  })
+
   it('启动参数带来的文件会在启动后直接打开', async () => {
     app.startupFile = 'C:/b.md'
     vi.resetModules()

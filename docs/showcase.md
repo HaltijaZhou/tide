@@ -159,7 +159,7 @@ fn main() {
 | 数学公式 | `$...$` `$$...$$` | ✅ |
 | Mermaid 图表 | ```` ```mermaid ```` | ✅ |
 | ECharts 图表 | ```` ```echarts ```` | ✅ |
-| 图片 | `![](https://…)` | ⚠️ 仅 http(s) 地址，`data:` 会被剥掉 |
+| 图片 | `![](images/图片.png)` / `![](https://…)` | ✅ 支持本地相对路径和 http(s) 地址；`data:` 会被剥掉 |
 | 键盘按键 | `<kbd>` | ✅ |
 | 折叠块 | `<details>` | ✅ |
 | 高亮 | `==文本==` / `<mark>` | ❌ 需在 Vditor 开启 `mark` |
