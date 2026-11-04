@@ -6,8 +6,9 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { open as openFileDialog, save as saveFileDialog, ask } from '@tauri-apps/plugin-dialog'
-import { initEditor, setMarkdown, setDocumentPath, focusEditor, getMarkdown } from './editor'
+import { initEditor, setMarkdown, setDocumentPath, focusEditor, getMarkdown, type InsertPastedImages } from './editor'
 import { createSession, type FsAdapter, type OpenedFile } from './file'
+import { clipboardImageMime, type ClipboardImage } from './clipboard-images'
 
 const inTauri = '__TAURI_INTERNALS__' in window
 const statusLeft = document.querySelector<HTMLSpanElement>('#status-left')!
@@ -19,6 +20,8 @@ let editorIsReady = false
 let editorValue = ''
 let savedEditorValue = ''
 let imageDocumentPath: string | null = null
+let documentVersion = 0
+const pendingImagePastes = new Set<Promise<boolean>>()
 
 function setActiveDocumentPath(path: string) {
   imageDocumentPath = path
@@ -83,6 +86,7 @@ function syncEditor() {
 }
 
 function displayMarkdown(markdown: string) {
+  documentVersion += 1
   setMarkdown(markdown)
   editorValue = getMarkdown()
   savedEditorValue = editorValue
@@ -161,6 +165,76 @@ async function saveCurrent(force = false) {
   syncEditor()
   await session.save(recreate || force, recreate)
   syncEditor()
+}
+
+async function pasteImages(files: ClipboardImage[], insert: InsertPastedImages, missing: number): Promise<boolean> {
+  const version = documentVersion
+  if (conflictActive || fileMissing) {
+    statusRight.textContent = '请先处理文档冲突或丢失的问题，再粘贴图片'
+    return false
+  }
+  if (!files.length && missing) {
+    let inserted = false
+    try { inserted = insert([]) } catch { /* Report the paste failure below. */ }
+    statusRight.textContent = inserted
+      ? '部分图片只有链接，未复制到 images 文件夹'
+      : '图片粘贴未完成，请重试'
+    return false
+  }
+  if (!imageDocumentPath) await saveCurrent()
+  if (documentVersion !== version) return false
+  const path = imageDocumentPath
+  if (!path || session.getState().path !== path || conflictActive || fileMissing) {
+    statusRight.textContent = '请先保存文档，再粘贴图片'
+    return false
+  }
+  const isCurrent = () => documentVersion === version && session.getState().path === path
+    && !conflictActive && !fileMissing
+
+  const paths: (string | null)[] = []
+  let failed = missing > 0
+  for (const file of files) {
+    try {
+      let relative: string
+      if ('localSource' in file) {
+        if (!isCurrent()) break
+        relative = await invoke<string>('copy_pasted_image', { documentPath: path, source: file.localSource })
+      } else {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        if (!isCurrent()) break
+        relative = await invoke<string>('save_pasted_image', bytes, { headers: {
+          'x-document-path': encodeURIComponent(path), 'x-image-mime': clipboardImageMime(file) ?? '',
+        } })
+      }
+      paths.push(relative)
+    } catch {
+      failed = true
+      paths.push(null)
+    }
+  }
+  const saved = paths.filter((relative): relative is string => relative !== null)
+  let inserted = false
+  if (paths.length && isCurrent()) {
+    try { inserted = insert(paths) } catch { /* The files remain available beside the original document. */ }
+  }
+  if (saved.length && !inserted) {
+    statusRight.textContent = `图片已保存但未插入（${path} 同目录）：${saved.join('、')}`
+  } else if (failed) {
+    statusRight.textContent = missing
+      ? '部分图片未保存，请检查图片来源、格式和文件夹权限'
+      : '图片保存失败，请检查格式和文件夹写入权限'
+  }
+  return inserted && !failed
+}
+
+function startImagePaste(files: ClipboardImage[], insert: InsertPastedImages, missing = 0): Promise<boolean> {
+  const pending = pasteImages(files, insert, missing).catch(() => {
+    statusRight.textContent = '图片保存失败，请检查文件夹写入权限'
+    return false
+  })
+  pendingImagePastes.add(pending)
+  void pending.then(() => pendingImagePastes.delete(pending))
+  return pending
 }
 
 async function openPath(path: string) {
@@ -306,7 +380,7 @@ function showConflict(message = '文件已被外部修改：') {
 
 initEditor(editorEl, { onInput, resolveLocalImage: inTauri
   ? (documentPath, source) => invoke<string>('resolve_document_image', { documentPath, source })
-  : undefined, onReady: () => {
+  : undefined, onPasteImages: inTauri ? startImagePaste : undefined, onReady: () => {
   editorIsReady = true
   editorValue = getMarkdown()
   savedEditorValue = editorValue
@@ -347,9 +421,19 @@ if (inTauri) {
       event.preventDefault()
       return
     }
+    let waitedForImages = false
+    while (pendingImagePastes.size) {
+      event.preventDefault()
+      waitedForImages = true
+      const results = await Promise.all([...pendingImagePastes])
+      if (conflictActive || results.some((result) => !result)) return
+    }
     // onInput 有 undoDelay 延迟（Vditor 默认 800ms）：敲完立即关窗时 session 可能还没变脏，
     // 用编辑器当前内容与会话内容比对兜底，防止丢最后一秒的输入
-    if (!fileMissing && !session.isDirty() && (!editorIsReady || getMarkdown() === editorValue)) return
+    if (!fileMissing && !session.isDirty() && (!editorIsReady || getMarkdown() === editorValue)) {
+      if (waitedForImages) await win.destroy()
+      return
+    }
     event.preventDefault()
     if (fileMissing && !session.isDirty()) {
       await saveCurrent()

@@ -7,7 +7,13 @@ const app = vi.hoisted(() => ({
   holdWatch: null as Promise<void> | null,
   holdSaveDialog: null as Promise<void> | null,
   holdAsk: null as Promise<void> | null,
+  holdImage: null as Promise<void> | null,
   failSave: false,
+  failImage: false,
+  failImageByte: null as number | null,
+  images: new Map<string, number[]>(),
+  sourceImages: new Map<string, number[]>(),
+  imageCounter: 0,
   failWatch: false,
   invalidUtf8: false,
   savePath: null as string | null,
@@ -21,6 +27,7 @@ const app = vi.hoisted(() => ({
   editorReady: true,
   ready: undefined as (() => void) | undefined,
   input: undefined as ((value: string) => void) | undefined,
+  paste: undefined as ((files: (File | { localSource: string })[], insert: (paths: (string | null)[]) => boolean, missing?: number) => Promise<void>) | undefined,
   drag: undefined as ((event: { payload: { type: string; paths: string[] } }) => void) | undefined,
   close: undefined as ((event: { preventDefault: () => void }) => Promise<void>) | undefined,
   keys: undefined as ((event: { ctrlKey: boolean; metaKey: boolean; key: string; preventDefault: () => void }) => void) | undefined,
@@ -35,7 +42,7 @@ const app = vi.hoisted(() => ({
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: { path?: string; content?: string; expected?: string | null; expectedMissing?: boolean }) => {
+  invoke: async (command: string, args: { path?: string; content?: string; expected?: string | null; expectedMissing?: boolean; documentPath?: string; source?: string }, options?: { headers: Record<string, string> }) => {
     if (command === 'open_file') {
       if (app.holdRead) await app.holdRead
       if (app.invalidUtf8) throw 'NOT_UTF8'
@@ -58,6 +65,21 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (command === 'take_initial_file') {
       const path = app.startupFile
       app.startupFile = null // 只交付一次
+      return path
+    }
+    if (command === 'save_pasted_image') {
+      if (app.holdImage) await app.holdImage
+      const bytes = Array.from(args as unknown as Uint8Array)
+      if (app.failImage || bytes[0] === app.failImageByte) throw 'IMAGE_SAVE_FAILED'
+      const path = `images/pasted-${++app.imageCounter}.${options!.headers['x-image-mime'] === 'image/jpeg' ? 'jpg' : 'png'}`
+      app.images.set(`${decodeURIComponent(options!.headers['x-document-path'])}|${path}`, bytes)
+      return path
+    }
+    if (command === 'copy_pasted_image') {
+      const bytes = app.sourceImages.get(args.source!)
+      if (!bytes) throw 'IMAGE_SAVE_FAILED'
+      const path = `images/pasted-${++app.imageCounter}.png`
+      app.images.set(`${args.documentPath}|${path}`, bytes)
       return path
     }
   },
@@ -86,8 +108,9 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   ask: async () => { app.questions += 1; if (app.holdAsk) await app.holdAsk; return app.confirm },
 }))
 vi.mock('./editor', () => ({
-  initEditor: (_element: unknown, callbacks: { onInput: (value: string) => void; onReady: () => void }) => {
+  initEditor: (_element: unknown, callbacks: { onInput: (value: string) => void; onReady: () => void; onPasteImages?: typeof app.paste }) => {
     app.input = callbacks.onInput
+    app.paste = callbacks.onPasteImages
     app.ready = () => { app.editorReady = true; callbacks.onReady() }
     if (!app.deferReady) app.ready()
   },
@@ -136,6 +159,12 @@ beforeEach(async () => {
   app.holdWatch = null
   app.holdSaveDialog = null
   app.holdAsk = null
+  app.holdImage = null
+  app.failImage = false
+  app.failImageByte = null
+  app.images = new Map()
+  app.sourceImages = new Map()
+  app.imageCounter = 0
   app.savePath = null
   app.confirm = true
   app.questions = 0
@@ -172,6 +201,162 @@ afterEach(() => {
 })
 
 describe('桌面文件操作', () => {
+  it('粘贴图片时保存到文档旁的 images 并插入相对路径', async () => {
+    await drop('C:/a.md')
+    const image = { type: 'image/png', arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as File
+    const inserted: (string | null)[][] = []
+
+    await app.paste!([image], (paths) => { inserted.push(paths); return true })
+
+    expect(app.images.get('C:/a.md|images/pasted-1.png')).toEqual([1, 2, 3])
+    expect(inserted).toEqual([['images/pasted-1.png']])
+  })
+
+  it('未命名文档粘贴图片时先保存文档', async () => {
+    app.savePath = 'C:/中文 #/new.md'
+    const image = { type: 'image/png', arrayBuffer: async () => new Uint8Array([4]).buffer } as File
+    const inserted: (string | null)[][] = []
+
+    await app.paste!([image], (paths) => { inserted.push(paths); return true })
+
+    expect(app.files.has('C:/中文 #/new.md')).toBe(true)
+    expect(app.images.get('C:/中文 #/new.md|images/pasted-1.png')).toEqual([4])
+    expect(inserted).toEqual([['images/pasted-1.png']])
+  })
+
+  it('取消首次保存时不写入图片或插入路径', async () => {
+    const image = { type: 'image/png', arrayBuffer: async () => new Uint8Array([4]).buffer } as File
+    const inserted: (string | null)[][] = []
+
+    await app.paste!([image], (paths) => { inserted.push(paths); return true })
+
+    expect(app.images.size).toBe(0)
+    expect(inserted).toEqual([])
+  })
+
+  it('图片写入失败时提示失败且不插入无效路径', async () => {
+    await drop('C:/a.md')
+    app.failImage = true
+    const image = { type: 'image/png', arrayBuffer: async () => new Uint8Array([4]).buffer } as File
+    const inserted: (string | null)[][] = []
+
+    await app.paste!([image], (paths) => { inserted.push(paths); return true })
+
+    expect(inserted).toEqual([[null]])
+    expect(app.statusRight!.textContent).toContain('图片保存失败')
+  })
+
+  it('图片保存期间切换文档不会把旧图片插入新文档', async () => {
+    await drop('C:/a.md')
+    let release!: () => void
+    app.holdImage = new Promise<void>((resolve) => { release = resolve })
+    const image = { type: 'image/png', arrayBuffer: async () => new Uint8Array([4]).buffer } as File
+    const inserted: (string | null)[][] = []
+    const pending = app.paste!([image], (paths) => { inserted.push(paths); return true })
+    await settle()
+    await drop('C:/b.md')
+    release()
+    await pending
+
+    expect(inserted).toEqual([])
+    expect(app.editorText).toBe('# 另一个文件')
+  })
+
+  it('图片保存期间出现外部修改冲突时不再插入图片', async () => {
+    await drop('C:/a.md')
+    let release!: () => void
+    app.holdImage = new Promise<void>((resolve) => { release = resolve })
+    const image = { type: 'image/png', arrayBuffer: async () => new Uint8Array([4]).buffer } as File
+    const inserted: (string | null)[][] = []
+    const pending = app.paste!([image], (paths) => { inserted.push(paths); return true })
+    await settle()
+    app.editorText = '# 当前修改'
+    app.input!(app.editorText)
+    app.files.set('C:/a.md', '# 外部修改')
+    app.changed!()
+    await settle()
+    release()
+    await pending
+
+    expect(inserted).toEqual([])
+    expect(app.statusRight!.textContent).toContain('已保存但未插入')
+  })
+
+  it('关闭窗口会等待正在保存的图片并保存插入后的文档', async () => {
+    await drop('C:/a.md')
+    let release!: () => void
+    app.holdImage = new Promise<void>((resolve) => { release = resolve })
+    const image = { type: 'image/png', arrayBuffer: async () => new Uint8Array([4]).buffer } as File
+    const pending = app.paste!([image], (paths) => {
+      app.editorText += `\n![图片](${paths[0]})`
+      return true
+    })
+    await settle()
+    let prevented = false
+    const closing = app.close!({ preventDefault: () => { prevented = true } })
+    await settle()
+
+    expect(prevented).toBe(true)
+    expect(app.destroyed).toBe(false)
+    release()
+    await pending
+    await closing
+    expect(app.files.get('C:/a.md')).toContain('images/pasted-1.png')
+    expect(app.destroyed).toBe(true)
+  })
+
+  it('多张图片中有一张失败时保留成功图片与原始顺序', async () => {
+    await drop('C:/a.md')
+    app.failImageByte = 1
+    const first = { type: 'image/png', arrayBuffer: async () => new Uint8Array([1]).buffer } as File
+    const second = { type: 'image/png', arrayBuffer: async () => new Uint8Array([2]).buffer } as File
+    const inserted: (string | null)[][] = []
+
+    await app.paste!([first, second], (paths) => { inserted.push(paths); return true })
+
+    expect(inserted).toEqual([[null, 'images/pasted-1.png']])
+    expect(app.statusRight!.textContent).toContain('图片保存失败')
+  })
+
+  it('复制图文剪贴板引用的本地图片到文档目录', async () => {
+    await drop('C:/a.md')
+    app.sourceImages.set('file:///C:/Temp/second.png', [7, 8])
+    const inserted: (string | null)[][] = []
+
+    await app.paste!([{ localSource: 'file:///C:/Temp/second.png' }], (paths) => { inserted.push(paths); return true })
+
+    expect(app.images.get('C:/a.md|images/pasted-1.png')).toEqual([7, 8])
+    expect(inserted).toEqual([['images/pasted-1.png']])
+  })
+
+  it('只有不可复制的图片链接时保留粘贴内容并提示', async () => {
+    const inserted: (string | null)[][] = []
+
+    await app.paste!([], (paths) => { inserted.push(paths); return true }, 2)
+
+    expect(inserted).toEqual([[]])
+    expect(app.files.has('C:/new.md')).toBe(false)
+    expect(app.images.size).toBe(0)
+    expect(app.statusRight!.textContent).toContain('未复制')
+  })
+
+  it('关闭期间图片保存失败时保留窗口以显示错误', async () => {
+    await drop('C:/a.md')
+    app.failImage = true
+    let release!: () => void
+    app.holdImage = new Promise<void>((resolve) => { release = resolve })
+    const image = { type: 'image/png', arrayBuffer: async () => new Uint8Array([4]).buffer } as File
+    const pending = app.paste!([image], () => true)
+    await settle()
+    const closing = app.close!({ preventDefault: () => {} })
+    release()
+
+    await pending
+    await closing
+    expect(app.destroyed).toBe(false)
+    expect(app.statusRight!.textContent).toContain('图片保存失败')
+  })
+
   it('打开和切换文档时使用当前文件作为图片的基准', async () => {
     await drop('C:/a.md')
     expect(app.imagePathAtLastRender).toBe('C:/a.md')

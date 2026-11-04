@@ -14,7 +14,9 @@ pub fn run() {
             commands::watch_file,
             commands::unwatch_file,
             commands::take_initial_file,
-            local_images::resolve_document_image
+            local_images::resolve_document_image,
+            local_images::save_pasted_image,
+            local_images::copy_pasted_image
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
