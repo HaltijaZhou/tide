@@ -14,7 +14,15 @@ const editor = vi.hoisted(() => ({
   context: undefined as undefined | {
     applyFormat: (action: string, range: Range) => void
     linkSource: (link: HTMLElement) => string | undefined
+    openLink: (url: string) => Promise<void> | void
   },
+  link: undefined as undefined | {
+    source: (link: HTMLElement) => string | undefined
+    open: (target: string) => Promise<void> | void
+    reportError: (message: string) => void
+  },
+  linkInstalls: 0,
+  linkRemovals: 0,
 }))
 
 vi.mock('vditor', () => ({
@@ -30,6 +38,21 @@ vi.mock('vditor', () => ({
   },
 }))
 vi.mock('./details', () => ({ installDetailsFolding: () => () => {} }))
+vi.mock('./links', () => ({
+  installLinkActivation: (
+    _container: unknown,
+    source: (link: HTMLElement) => string | undefined,
+    open: (target: string) => Promise<void> | void,
+    reportError: (message: string) => void,
+  ) => {
+    editor.link = { source, open, reportError }
+    editor.linkInstalls += 1
+    return () => {
+      editor.link = undefined
+      editor.linkRemovals += 1
+    }
+  },
+}))
 vi.mock('./context-menu', () => ({ installContextMenu: (_container: unknown, callbacks: typeof editor.context) => {
   editor.context = callbacks
   return () => {}
@@ -46,6 +69,9 @@ afterEach(() => {
   editor.ir = undefined
   editor.afterInsert = undefined
   editor.context = undefined
+  editor.link = undefined
+  editor.linkInstalls = 0
+  editor.linkRemovals = 0
   vi.unstubAllGlobals()
 })
 
@@ -185,6 +211,68 @@ it('显示文字相同的引用链接按各自位置获取正确地址', async (
   footnotes = true
   expect(editor.context!.linkSource(link)).toBe('https://example.com/a')
   expect(editor.context!.linkSource(other)).toBe('https://example.com/b')
+})
+
+it('Ctrl+左键与右键菜单共用同一个链接地址提取', async () => {
+  vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener: () => {} }) })
+  const onOpenLink = vi.fn()
+  const onContextMessage = vi.fn()
+  const link = {
+    dataset: { type: 'a' }, getAttribute: () => 'https://example.com/a', querySelector: () => null,
+  } as unknown as HTMLElement
+  const { initEditor } = await import('./editor')
+  initEditor({} as HTMLElement, { onInput: () => {}, onReady: () => {}, onOpenLink, onContextMessage })
+  editor.options[0].after()
+
+  expect(editor.link!.source(link)).toBe('https://example.com/a')
+  expect(editor.context!.linkSource(link)).toBe('https://example.com/a')
+
+  editor.context!.openLink('https://example.com/a')
+  await editor.link!.open('https://example.com/a')
+
+  expect(onOpenLink).toHaveBeenCalledTimes(2)
+  expect(onOpenLink).toHaveBeenNthCalledWith(1, 'https://example.com/a')
+  expect(onOpenLink).toHaveBeenNthCalledWith(2, 'https://example.com/a')
+})
+
+it('引用式链接经点击和菜单打开时仍取到各自的目标', async () => {
+  vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener: () => {} }) })
+  const urls = ['https://example.com/a', 'https://example.com/b']
+  const anchors = () => urls.map((url) => ({ textContent: '同名', hasAttribute: () => true, getAttribute: () => url,
+    classList: { contains: () => false }, closest: () => null }))
+  vi.stubGlobal('document', { createElement: () => ({ innerHTML: '', content: { querySelectorAll: anchors } }) })
+  editor.lute = { Md2HTML: () => '<p>引用链接</p>' }
+  const link = {
+    dataset: { type: 'link-ref' }, getAttribute: () => null,
+    children: [{ classList: { contains: () => false }, textContent: '同名' }],
+  } as unknown as HTMLElement
+  const other = { ...link } as unknown as HTMLElement
+  const container = { contains: () => true, querySelectorAll: () => [link, other] } as unknown as HTMLElement
+  const { initEditor } = await import('./editor')
+  initEditor(container, { onInput: () => {}, onReady: () => {} })
+  editor.options[0].after()
+
+  expect(editor.link!.source(link)).toBe('https://example.com/a')
+  expect(editor.link!.source(other)).toBe('https://example.com/b')
+  expect(editor.context!.linkSource(link)).toBe('https://example.com/a')
+  expect(editor.context!.linkSource(other)).toBe('https://example.com/b')
+})
+
+it('编辑器重建时移除旧的链接点击监听', async () => {
+  vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener: () => {} }) })
+  const { initEditor } = await import('./editor')
+  initEditor({} as HTMLElement, { onInput: () => {}, onReady: () => {} })
+  editor.options[0].after()
+  const first = editor.link
+  const baseline = editor.linkRemovals
+
+  initEditor({} as HTMLElement, { onInput: () => {}, onReady: () => {} })
+
+  expect(editor.linkRemovals).toBe(baseline + 1)
+  expect(editor.link).toBeUndefined()
+  editor.options[1].after()
+  expect(editor.link).toBeDefined()
+  expect(editor.link).not.toBe(first)
 })
 
 it('深色启动时使用离线的深色代码高亮主题', async () => {

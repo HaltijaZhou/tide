@@ -4,6 +4,7 @@ import { installDetailsFolding } from './details'
 import { installLocalImageRenderer } from './images'
 import { clipboardImageMime, rtfClipboardImages, type ClipboardImage } from './clipboard-images'
 import { installContextMenu } from './context-menu'
+import { installLinkActivation } from './links'
 import { safeMarkdownForSelection, selectedTextForFormatting } from './context-format'
 
 let vditor: Vditor | null = null
@@ -11,6 +12,7 @@ let resetDetailsFolding = () => {}
 let imageRenderer: ReturnType<typeof installLocalImageRenderer> | null = null
 let removeImagePaste = () => {}
 let removeContextMenu = () => {}
+let removeLinkActivation = () => {}
 
 export type InsertPastedImages = (paths: (string | null)[]) => boolean
 
@@ -142,6 +144,7 @@ export function initEditor(
   imageRenderer?.dispose()
   removeImagePaste()
   removeContextMenu()
+  removeLinkActivation()
   imageRenderer = callbacks.resolveLocalImage
     ? installLocalImageRenderer(container, callbacks.resolveLocalImage, () => currentMarkdownImageSources(container))
     : null
@@ -172,11 +175,18 @@ export function initEditor(
     toolbar: ['headings', 'bold', 'italic', 'strike', 'inline-code', 'link', 'quote',
       'list', 'ordered-list', 'check', 'code', 'table', 'line']
       .map((name) => ({ name, hotkey: '' })),
+    // 链接只通过 Ctrl+左键与右键菜单打开：关掉 Vditor 自带的 window.open，
+    // 避免未经分类的目标被 WebView 直接导航。
+    link: { isOpen: false },
     input: (value) => callbacks.onInput(value),
     after: () => {
       ready = true
       if (media.matches !== initialDark) applyTheme()
       resetDetailsFolding = installDetailsFolding(container)
+      removeLinkActivation = installLinkActivation(container,
+        (link) => currentLinkSource(container, link),
+        (target) => callbacks.onOpenLink?.(target),
+        (message) => callbacks.onContextMessage?.(message))
       removeContextMenu = installContextMenu(container, {
         applyFormat: applyContextFormat,
         imageSource: (image) => currentMarkdownImageSources(container).get(image),
