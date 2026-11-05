@@ -10,6 +10,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { initEditor, setMarkdown, setDocumentPath, focusEditor, getMarkdown, type InsertPastedImages } from './editor'
 import { createSession, type FsAdapter, type OpenedFile } from './file'
 import { clipboardImageMime, type ClipboardImage } from './clipboard-images'
+import { classifyLinkDestination } from './links'
 
 const inTauri = '__TAURI_INTERNALS__' in window
 const statusLeft = document.querySelector<HTMLSpanElement>('#status-left')!
@@ -238,18 +239,20 @@ function startImagePaste(files: ClipboardImage[], insert: InsertPastedImages, mi
   return pending
 }
 
-async function openPath(path: string) {
+async function openPath(path: string, isCurrent: () => boolean = () => true) {
   await editorReady
   await externalCheck
-  if (conflictActive) return
+  if (conflictActive || !isCurrent()) return
   syncEditor()
   if (session.isDirty() || fileMissing) {
     await saveCurrent() // 单文件模型：打开前先保旧的
+    if (!isCurrent()) return
     if (session.isDirty() || fileMissing) return // 保存失败或保存过程中又有编辑，不能丢弃当前内容
   }
   try {
     const beforeRead = getMarkdown()
-    const r = await session.open(path, () => !conflictActive && !pendingExternalChecks && getMarkdown() === beforeRead)
+    const r = await session.open(path, () => isCurrent() && !conflictActive
+      && !pendingExternalChecks && getMarkdown() === beforeRead)
     setActiveDocumentPath(path)
     fileMissing = false
     watchFailed = false
@@ -279,6 +282,55 @@ function renderWordCount(markdown: string) {
   statusRight.textContent = `字数 ${markdown.replace(/\s+/g, '').length}`
 }
 
+const linkErrorMessages: Record<string, string> = {
+  NO_DOCUMENT_PATH: '请先保存当前文档，再打开相对链接',
+  MARKDOWN_UNAVAILABLE: '链接指向的文件不存在或无法读取',
+  INVALID_MARKDOWN_LINK: '无法打开此链接',
+}
+
+function reportLinkFailure(error: unknown) {
+  statusRight.textContent = typeof error === 'string' && linkErrorMessages[error]
+    ? linkErrorMessages[error]
+    : '无法打开链接'
+}
+
+/** Ctrl+左键与右键菜单共用：网站交给系统，本地 Markdown 在当前窗口打开。 */
+async function openLink(target: string) {
+  const destination = classifyLinkDestination(target)
+  if (destination.kind === 'unsupported') {
+    statusRight.textContent = '无法打开此链接'
+    return
+  }
+  if (destination.kind === 'external') {
+    try {
+      if (inTauri) await openUrl(destination.target)
+      else window.open(destination.target, '_blank', 'noopener,noreferrer')
+    } catch {
+      statusRight.textContent = '无法打开链接'
+    }
+    return
+  }
+  if (!inTauri) {
+    statusRight.textContent = '本地文档需要在桌面应用中打开'
+    return
+  }
+  const version = documentVersion
+  const sourcePath = session.getState().path
+  // 未命名文档的首次保存会把路径从 null 变成具体文件，这不算切换文档。
+  const isCurrent = () => documentVersion === version && !conflictActive
+    && (session.getState().path === sourcePath || sourcePath === null)
+  let resolved: string
+  try {
+    resolved = await invoke<string>('resolve_markdown_link', {
+      documentPath: sourcePath, source: destination.target,
+    })
+  } catch (error) {
+    reportLinkFailure(error)
+    return
+  }
+  if (!isCurrent()) return
+  await openPath(resolved, isCurrent)
+}
 async function handleExternalChange() {
   const path = session.getState().path
   if (!path) return
@@ -383,7 +435,7 @@ initEditor(editorEl, { onInput, resolveLocalImage: inTauri
   ? (documentPath, source) => invoke<string>('resolve_document_image', { documentPath, source })
   : undefined, onPasteImages: inTauri ? startImagePaste : undefined,
   onContextMessage: (message) => { statusRight.textContent = message },
-  onOpenLink: inTauri ? openUrl : (url) => { window.open(url, '_blank', 'noopener,noreferrer') },
+  onOpenLink: openLink,
   onReady: () => {
   editorIsReady = true
   editorValue = getMarkdown()

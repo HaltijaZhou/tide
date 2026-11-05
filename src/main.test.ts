@@ -39,10 +39,24 @@ const app = vi.hoisted(() => ({
   title: '',
   destroyed: false,
   startupFile: null as string | null,
+  openLink: undefined as ((target: string) => Promise<void> | void) | undefined,
+  opened: [] as string[],
+  resolved: new Map<string, string>(),
+  resolveCalls: [] as { documentPath: string | null; source: string }[],
+  holdResolve: null as Promise<void> | null,
+  failResolve: null as string | null,
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (command: string, args: { path?: string; content?: string; expected?: string | null; expectedMissing?: boolean; documentPath?: string; source?: string }, options?: { headers: Record<string, string> }) => {
+  invoke: async (command: string, args: { path?: string; content?: string; expected?: string | null; expectedMissing?: boolean; documentPath?: string | null; source?: string }, options?: { headers: Record<string, string> }) => {
+    if (command === 'resolve_markdown_link') {
+      app.resolveCalls.push({ documentPath: args.documentPath ?? null, source: args.source! })
+      if (app.holdResolve) await app.holdResolve
+      if (app.failResolve) throw app.failResolve
+      const resolved = app.resolved.get(`${args.documentPath ?? ''}|${args.source}`)
+      if (!resolved) throw 'MARKDOWN_UNAVAILABLE'
+      return resolved
+    }
     if (command === 'open_file') {
       if (app.holdRead) await app.holdRead
       if (app.invalidUtf8) throw 'NOT_UTF8'
@@ -84,6 +98,9 @@ vi.mock('@tauri-apps/api/core', () => ({
     }
   },
 }))
+vi.mock('@tauri-apps/plugin-opener', () => ({
+  openUrl: async (url: string) => { app.opened.push(url) },
+}))
 vi.mock('@tauri-apps/api/event', () => ({
   listen: async (_event: string, callback: (event: { payload: boolean }) => void) => {
     app.changed = () => callback({ payload: false })
@@ -108,9 +125,10 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   ask: async () => { app.questions += 1; if (app.holdAsk) await app.holdAsk; return app.confirm },
 }))
 vi.mock('./editor', () => ({
-  initEditor: (_element: unknown, callbacks: { onInput: (value: string) => void; onReady: () => void; onPasteImages?: typeof app.paste }) => {
+  initEditor: (_element: unknown, callbacks: { onInput: (value: string) => void; onReady: () => void; onPasteImages?: typeof app.paste; onOpenLink?: typeof app.openLink }) => {
     app.input = callbacks.onInput
     app.paste = callbacks.onPasteImages
+    app.openLink = callbacks.onOpenLink
     app.ready = () => { app.editorReady = true; callbacks.onReady() }
     if (!app.deferReady) app.ready()
   },
@@ -148,7 +166,7 @@ async function drop(path: string) {
 beforeEach(async () => {
   vi.resetModules()
   vi.useFakeTimers()
-  app.files = new Map([['C:/a.md', '# 原文'], ['C:/b.md', '# 另一个文件']])
+  app.files = new Map([['C:/a.md', '# 原文'], ['C:/b.md', '# 另一个文件'], ['C:/c.md', '# 第三个文件']])
   app.imageDocumentPath = null
   app.imagePathAtLastRender = null
   app.failSave = false
@@ -176,6 +194,12 @@ beforeEach(async () => {
   app.destroyed = false
   app.watchCount = 0
   app.startupFile = null
+  app.openLink = undefined
+  app.opened = []
+  app.resolved = new Map()
+  app.resolveCalls = []
+  app.holdResolve = null
+  app.failResolve = null
   const elements = new Map([
     ['#status-left', new FakeElement()],
     ['#status-right', new FakeElement()],
@@ -903,5 +927,177 @@ describe('桌面文件操作', () => {
 
     expect(app.files.get('C:/a.md')).toBe('<非 UTF-8 数据>')
     expect(app.statusLeft!.children.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('打开链接', () => {
+  it('网站与邮件链接只交给系统默认程序', async () => {
+    await app.openLink!('https://example.com/a')
+    await app.openLink!('mailto:user@example.com')
+    await settle()
+
+    expect(app.opened).toEqual(['https://example.com/a', 'mailto:user@example.com'])
+    expect(app.resolveCalls).toEqual([])
+  })
+
+  it('不支持的地址不会被打开，并给出提示', async () => {
+    await app.openLink!('javascript:alert(1)')
+    await app.openLink!('docs/a.pdf')
+    await settle()
+
+    expect(app.opened).toEqual([])
+    expect(app.resolveCalls).toEqual([])
+    expect(app.statusRight!.textContent).toContain('无法打开')
+  })
+
+  it('本地 Markdown 链接以当前文件为基准解析并在当前窗口打开', async () => {
+    await drop('C:/a.md')
+    app.resolved.set('C:/a.md|docs/showcase.md', 'C:/docs/showcase.md')
+    app.files.set('C:/docs/showcase.md', '# 示例文档')
+
+    await app.openLink!('docs/showcase.md')
+    await settle()
+
+    expect(app.resolveCalls).toEqual([{ documentPath: 'C:/a.md', source: 'docs/showcase.md' }])
+    expect(app.editorText).toBe('# 示例文档')
+    expect(app.title).toBe('showcase.md - tide')
+    expect(app.opened).toEqual([])
+  })
+
+  it('有未保存修改时先保存源文档再切换', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 本地修改'
+    app.input!(app.editorText)
+    app.resolved.set('C:/a.md|b.md', 'C:/b.md')
+
+    await app.openLink!('b.md')
+    await settle()
+
+    expect(app.files.get('C:/a.md')).toBe('# 本地修改')
+    expect(app.editorText).toBe('# 另一个文件')
+  })
+
+  it('保存失败时不切换文档', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 本地修改'
+    app.input!(app.editorText)
+    app.failSave = true
+    app.resolved.set('C:/a.md|b.md', 'C:/b.md')
+
+    await app.openLink!('b.md')
+    await settle()
+
+    expect(app.editorText).toBe('# 本地修改')
+    expect(app.title).toContain('a.md')
+    expect(app.files.get('C:/a.md')).toBe('# 原文')
+  })
+
+  it('存在外部冲突时不切换文档', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 本地修改'
+    app.input!(app.editorText)
+    app.files.set('C:/a.md', '# 外部修改')
+    app.changed!()
+    await settle()
+    app.resolved.set('C:/a.md|b.md', 'C:/b.md')
+
+    await app.openLink!('b.md')
+    await settle()
+
+    expect(app.editorText).toBe('# 本地修改')
+    expect(app.statusLeft!.children).toHaveLength(2)
+  })
+
+  it('解析期间切换到其他文档时丢弃过时的结果', async () => {
+    await drop('C:/a.md')
+    let release!: () => void
+    app.holdResolve = new Promise<void>((resolve) => { release = resolve })
+    app.resolved.set('C:/a.md|c.md', 'C:/c.md')
+
+    const pending = app.openLink!('c.md')
+    await settle()
+    await drop('C:/b.md')
+    release()
+    await pending
+
+    expect(app.editorText).toBe('# 另一个文件')
+    expect(app.title).toContain('b.md')
+  })
+
+  it('解析期间源文档被外部重载时丢弃结果', async () => {
+    await drop('C:/a.md')
+    let release!: () => void
+    app.holdResolve = new Promise<void>((resolve) => { release = resolve })
+    app.resolved.set('C:/a.md|c.md', 'C:/c.md')
+
+    const pending = app.openLink!('c.md')
+    await settle()
+    app.files.set('C:/a.md', '# 外部重载')
+    app.changed!()
+    await settle()
+    release()
+    await pending
+
+    expect(app.editorText).toBe('# 外部重载')
+    expect(app.title).toContain('a.md')
+  })
+
+  it('未命名文档打开相对链接时提示先保存', async () => {
+    app.editorText = '# 新文档'
+    app.input!(app.editorText)
+    app.failResolve = 'NO_DOCUMENT_PATH'
+
+    await app.openLink!('docs/showcase.md')
+    await settle()
+
+    expect(app.resolveCalls).toEqual([{ documentPath: null, source: 'docs/showcase.md' }])
+    expect(app.statusRight!.textContent).toContain('先保存')
+    expect(app.editorText).toBe('# 新文档')
+  })
+
+  it('未命名文档的绝对链接触发首次保存后仍能打开目标', async () => {
+    app.savePath = 'C:/new.md'
+    app.editorText = '# 新文档'
+    app.input!(app.editorText)
+    app.resolved.set('|C:/docs/showcase.md', 'C:/docs/showcase.md')
+    app.files.set('C:/docs/showcase.md', '# 示例文档')
+
+    await app.openLink!('C:/docs/showcase.md')
+    await settle()
+
+    expect(app.files.get('C:/new.md')).toBe('# 新文档')
+    expect(app.editorText).toBe('# 示例文档')
+  })
+
+  it('解析失败时保留原文与当前路径并提示', async () => {
+    await drop('C:/a.md')
+    app.failResolve = 'MARKDOWN_UNAVAILABLE'
+
+    await app.openLink!('docs/missing.md')
+    await settle()
+
+    expect(app.editorText).toBe('# 原文')
+    expect(app.title).toContain('a.md')
+    expect(app.statusLeft!.textContent).toBe('已保存')
+    expect(app.statusRight!.textContent).toContain('不存在')
+  })
+
+  it('没有 Tauri 时网站链接用浏览器打开，本地链接提示不可用', async () => {
+    vi.resetModules()
+    const opened: string[] = []
+    vi.stubGlobal('window', {
+      addEventListener: () => {},
+      open: (url: string) => { opened.push(url) },
+    })
+    await import('./main')
+
+    await app.openLink!('https://example.com/a')
+    await settle()
+    expect(opened).toEqual(['https://example.com/a'])
+
+    await app.openLink!('docs/showcase.md')
+    await settle()
+    expect(app.resolveCalls).toEqual([])
+    expect(app.statusRight!.textContent).toContain('桌面')
   })
 })
