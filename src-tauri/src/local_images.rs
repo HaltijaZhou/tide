@@ -1,67 +1,16 @@
+use crate::local_paths::{
+    has_url_scheme, is_network_or_device_path, is_windows_drive_path, split_source_suffix,
+    valid_percent_encoding,
+};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
+/// 图片地址与链接地址共用同一套后缀切分规则。
 fn split_image_source(source: &str) -> (&str, &str) {
-    let prefix = if cfg!(windows) && (source.starts_with("\\\\?\\") || source.starts_with("//?/")) {
-        4
-    } else {
-        0
-    };
-    match source[prefix..].find(['?', '#']) {
-        Some(index) => source.split_at(prefix + index),
-        None => (source, ""),
-    }
-}
-
-fn valid_percent_encoding(source: &str) -> bool {
-    let bytes = source.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            if index + 2 >= bytes.len()
-                || !bytes[index + 1].is_ascii_hexdigit()
-                || !bytes[index + 2].is_ascii_hexdigit()
-            {
-                return false;
-            }
-            index += 3;
-        } else {
-            index += 1;
-        }
-    }
-    true
-}
-
-fn is_windows_drive_path(source: &str) -> bool {
-    let bytes = source.as_bytes();
-    cfg!(windows)
-        && bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && matches!(bytes[2], b'/' | b'\\')
-}
-
-fn has_url_scheme(source: &str) -> bool {
-    let Some((scheme, _)) = source.split_once(':') else {
-        return false;
-    };
-    let mut chars = scheme.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
-}
-
-fn is_network_or_device_path(path: &Path) -> bool {
-    #[cfg(windows)]
-    if let Some(std::path::Component::Prefix(prefix)) = path.components().next() {
-        use std::path::Prefix;
-        return !matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_));
-    }
-    let text = path.as_os_str().to_string_lossy();
-    let bytes = text.as_bytes();
-    bytes.len() >= 2 && matches!(bytes[0], b'/' | b'\\') && matches!(bytes[1], b'/' | b'\\')
+    split_source_suffix(source)
 }
 
 fn resolve_image_candidate(document_path: &Path, source: &str) -> Result<PathBuf, String> {
