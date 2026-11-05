@@ -5,16 +5,20 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## 0.1.4 - 2026-11-04
+## [0.1.4] - 2026-11-05
 
 ### 新增
 
 - 粘贴图片时保存到 Markdown 文件旁的 `images/` 目录，并插入相对路径；未命名文档会先提示保存
 - 支持多张图片及常见的图文剪贴板来源，保存失败时提示并保留可恢复的内容
+- 新增「潮笺」右键菜单：选中文字时提供加粗、斜体、删除线和行内代码，段落样式与插入操作收在子菜单中
+- 右键链接和图片时提供相应的打开、复制操作；菜单适配系统明暗模式、键盘操作和窗口边缘
 
 ### 修复
 
 - 防止图片保存期间切换文档、出现冲突或关闭窗口导致图片插入错误位置或丢失修改
+- 右键格式化时保护含 HTML 特殊字符的文本，避免将文字误解析为页面元素；剪贴板读取期间光标移动时不会粘贴到错误位置
+- 部分无法完整读取图片数据的 Word 图文会提示使用系统粘贴，避免静默遗漏图片
 
 ## [0.1.3] - 2026-11-03
 
@@ -130,6 +134,7 @@
 - 完全离线可用：Vditor 的 Lute 引擎、图标与主题 CSS 全部本地化，不依赖 CDN
 - GitHub Actions 构建与发布流水线，产出 NSIS 与 MSI 安装包
 
+[0.1.4]: https://github.com/HaltijaZhou/tide/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/zhouhaltija/tide/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/zhouhaltija/tide/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/zhouhaltija/tide/compare/v0.1.0...v0.1.1

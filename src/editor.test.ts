@@ -7,20 +7,33 @@ const editor = vi.hoisted(() => ({
   inserted: [] as string[],
   value: '',
   toMarkdown: null as ((html: string) => string) | null,
+  toolbar: {} as Record<string, unknown>,
+  lute: undefined as undefined | { Md2HTML: (markdown: string) => string },
+  ir: undefined as undefined | { element: unknown },
+  afterInsert: undefined as undefined | (() => void),
+  context: undefined as undefined | {
+    applyFormat: (action: string, range: Range) => void
+    linkSource: (link: HTMLElement) => string | undefined
+  },
 }))
 
 vi.mock('vditor', () => ({
   default: class {
+    vditor = { toolbar: { elements: editor.toolbar }, lute: editor.lute, ir: editor.ir }
     constructor(_container: unknown, options: { preview: { hljs?: { style: string } }; after: () => void }) { editor.options.push(options) }
     setValue(value: string, clearStack?: boolean) { editor.calls.push({ value, clearStack }) }
     getValue() { return editor.value }
     focus() {}
-    insertMD(value: string) { editor.inserted.push(value) }
+    insertMD(value: string) { editor.inserted.push(value); editor.afterInsert?.() }
     html2md(value: string) { return editor.toMarkdown?.(value) ?? value }
     setTheme(theme: string, contentTheme?: string, codeTheme?: string) { editor.themes.push([theme, contentTheme, codeTheme]) }
   },
 }))
 vi.mock('./details', () => ({ installDetailsFolding: () => () => {} }))
+vi.mock('./context-menu', () => ({ installContextMenu: (_container: unknown, callbacks: typeof editor.context) => {
+  editor.context = callbacks
+  return () => {}
+} }))
 
 afterEach(() => {
   editor.options = []
@@ -28,6 +41,11 @@ afterEach(() => {
   editor.inserted = []
   editor.value = ''
   editor.toMarkdown = null
+  editor.toolbar = {}
+  editor.lute = undefined
+  editor.ir = undefined
+  editor.afterInsert = undefined
+  editor.context = undefined
   vi.unstubAllGlobals()
 })
 
@@ -39,6 +57,134 @@ it('载入文档时清除旧文档的撤销历史', async () => {
   setMarkdown('# 新文件')
 
   expect(editor.calls).toEqual([{ value: '# 新文件', clearStack: true }])
+})
+
+it('准备右键格式命令时不占用 Ctrl+O 打开文件快捷键', async () => {
+  vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener: () => {} }) })
+  const { initEditor } = await import('./editor')
+  initEditor({} as HTMLElement, { onInput: () => {}, onReady: () => {} })
+  const options = editor.options[0] as unknown as { toolbar: Array<{ name: string; hotkey?: string }> }
+  const orderedList = options.toolbar.find((item) => item.name === 'ordered-list')
+
+  expect(orderedList).toBeDefined()
+  expect(orderedList?.hotkey).toBe('')
+})
+
+it('格式化含 HTML 字面量的选区时使用安全的 Markdown 路径', async () => {
+  vi.stubGlobal('Node', { TEXT_NODE: 3 })
+  vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener: () => {} }) })
+  const click = vi.fn()
+  const button = { click, classList: { toggle() {}, remove() {}, contains: () => false } }
+  editor.toolbar = { bold: { firstElementChild: button } }
+  const { initEditor } = await import('./editor')
+  initEditor({} as HTMLElement, { onInput: () => {}, onReady: () => {} })
+  editor.options[0].after()
+  const range = { startContainer: { nodeType: 3, parentElement: { closest: () => null } },
+    toString: () => '<img src=x> & 原文' } as unknown as Range
+
+  editor.context!.applyFormat('bold', range)
+
+  expect(editor.inserted).toEqual(['**&lt;img src=x&gt; &amp; 原文**'])
+  expect(click).not.toHaveBeenCalled()
+})
+
+it('安全格式化后继续选中新生成的文字', async () => {
+  vi.stubGlobal('Node', { TEXT_NODE: 3 })
+  vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener: () => {} }) })
+  const selectedNode = { textContent: '<原文> & 文字' }
+  let inserted = false
+  let selected: unknown
+  const restoredRange = { selectNodeContents: (node: unknown) => { selected = node } }
+  const selection = { removeAllRanges() {}, addRange: vi.fn() }
+  const root = { ownerDocument: { createRange: () => restoredRange, getSelection: () => selection },
+    querySelectorAll: () => inserted ? [selectedNode] : [] }
+  editor.ir = { element: root }
+  editor.afterInsert = () => { inserted = true }
+  editor.toolbar = { bold: { firstElementChild: { click() {}, classList: { toggle() {}, remove() {}, contains: () => false } } } }
+  const { initEditor } = await import('./editor')
+  initEditor({} as HTMLElement, { onInput: () => {}, onReady: () => {} })
+  editor.options[0].after()
+  const range = { startContainer: { nodeType: 3, parentElement: { closest: () => null } },
+    toString: () => '<原文> & 文字' } as unknown as Range
+
+  editor.context!.applyFormat('bold', range)
+
+  expect(selected).toBe(selectedNode)
+  expect(selection.addRange).toHaveBeenCalledWith(restoredRange)
+})
+
+it('对含实体的已选文字继续加格式时不复制隐藏源码', async () => {
+  vi.stubGlobal('Node', { TEXT_NODE: 3 })
+  vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener: () => {} }) })
+  let removed = false
+  const fragment = { querySelectorAll: () => [{ remove: () => { removed = true } }],
+    get textContent() { return removed ? 'a & b' : 'a &amp;& b' } }
+  const range = { startContainer: { nodeType: 3, parentElement: { closest: () => null } },
+    toString: () => 'a &amp;& b', cloneContents: () => fragment } as unknown as Range
+  editor.toolbar = { italic: { firstElementChild: { click() {}, classList: { toggle() {}, remove() {}, contains: () => false } } } }
+  const { initEditor } = await import('./editor')
+  initEditor({} as HTMLElement, { onInput: () => {}, onReady: () => {} })
+  editor.options[0].after()
+
+  editor.context!.applyFormat('italic', range)
+
+  expect(editor.inserted).toEqual(['*a &amp; b*'])
+})
+
+it('特殊字符选区首尾有空格时保留空格并只格式化文字', async () => {
+  vi.stubGlobal('Node', { TEXT_NODE: 3 })
+  vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener: () => {} }) })
+  const selection = { removeAllRanges() {}, addRange: vi.fn() }
+  const doc = { getSelection: () => selection }
+  const node = { nodeType: 3, parentElement: { closest: () => null }, ownerDocument: doc }
+  const adjusted = { setStart: vi.fn(), setEnd: vi.fn() }
+  const range = { startContainer: node, endContainer: node, startOffset: 0, endOffset: 10,
+    cloneRange: () => adjusted, toString: () => ' <x> & a  ' } as unknown as Range
+  editor.toolbar = { bold: { firstElementChild: { click() {}, classList: { toggle() {}, remove() {}, contains: () => false } } } }
+  const { initEditor } = await import('./editor')
+  initEditor({} as HTMLElement, { onInput: () => {}, onReady: () => {} })
+  editor.options[0].after()
+
+  editor.context!.applyFormat('bold', range)
+
+  expect(adjusted.setStart).toHaveBeenCalledWith(node, 1)
+  expect(adjusted.setEnd).toHaveBeenCalledWith(node, 8)
+  expect(editor.inserted).toEqual(['**&lt;x&gt; &amp; a**'])
+})
+
+it('显示文字相同的引用链接按各自位置获取正确地址', async () => {
+  vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener: () => {} }) })
+  let urls = ['https://example.com/a', 'https://example.com/a']
+  let footnotes = false
+  const anchors = () => [
+    ...urls.map((url) => ({ textContent: '同名', hasAttribute: () => true, getAttribute: () => url,
+      classList: { contains: () => false }, closest: () => null })),
+    ...(footnotes ? [
+      { textContent: '1', hasAttribute: () => true, getAttribute: () => '#footnotes-def-1',
+        classList: { contains: () => false }, closest: () => ({}) },
+      { textContent: '↩', hasAttribute: () => true, getAttribute: () => '#footnotes-ref-1',
+        classList: { contains: () => true }, closest: () => null },
+    ] : []),
+  ]
+  vi.stubGlobal('document', { createElement: () => ({ innerHTML: '', content: { querySelectorAll: anchors } }) })
+  editor.lute = { Md2HTML: () => '<p>引用链接</p>' }
+  const link = {
+    dataset: { type: 'link-ref' }, getAttribute: () => null,
+    children: [{ classList: { contains: () => false }, textContent: '同名' }],
+  } as unknown as HTMLElement
+  const other = { ...link } as unknown as HTMLElement
+  const container = { contains: () => true, querySelectorAll: () => [link, other] } as unknown as HTMLElement
+  const { initEditor } = await import('./editor')
+  initEditor(container, { onInput: () => {}, onReady: () => {} })
+  editor.options[0].after()
+
+  expect(editor.context!.linkSource(link)).toBe('https://example.com/a')
+  urls = ['https://example.com/a', 'https://example.com/b']
+  expect(editor.context!.linkSource(link)).toBe('https://example.com/a')
+  expect(editor.context!.linkSource(other)).toBe('https://example.com/b')
+  footnotes = true
+  expect(editor.context!.linkSource(link)).toBe('https://example.com/a')
+  expect(editor.context!.linkSource(other)).toBe('https://example.com/b')
 })
 
 it('深色启动时使用离线的深色代码高亮主题', async () => {

@@ -10,6 +10,8 @@
   --tide-surface: #eaf1ed;
   --tide-surface-hover: #dbece4;
   --tide-selection: #cfe6dd;
+  --tide-menu: #fcfefc;
+  --tide-menu-shadow: rgba(29, 56, 46, 0.2);
   --tide-error: #a33d33;
   --tide-warning: #80511a;
   --tide-callout-tip: #316b50;
@@ -32,6 +34,8 @@
     --tide-surface: #213632;
     --tide-surface-hover: #2b4840;
     --tide-selection: #33564c;
+    --tide-menu: #233632;
+    --tide-menu-shadow: rgba(0, 0, 0, 0.44);
     --tide-error: #eea49a;
     --tide-warning: #e9c28c;
     --tide-callout-tip: #94cbaa;

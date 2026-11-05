@@ -6,6 +6,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { open as openFileDialog, save as saveFileDialog, ask } from '@tauri-apps/plugin-dialog'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { initEditor, setMarkdown, setDocumentPath, focusEditor, getMarkdown, type InsertPastedImages } from './editor'
 import { createSession, type FsAdapter, type OpenedFile } from './file'
 import { clipboardImageMime, type ClipboardImage } from './clipboard-images'
@@ -380,7 +381,10 @@ function showConflict(message = '文件已被外部修改：') {
 
 initEditor(editorEl, { onInput, resolveLocalImage: inTauri
   ? (documentPath, source) => invoke<string>('resolve_document_image', { documentPath, source })
-  : undefined, onPasteImages: inTauri ? startImagePaste : undefined, onReady: () => {
+  : undefined, onPasteImages: inTauri ? startImagePaste : undefined,
+  onContextMessage: (message) => { statusRight.textContent = message },
+  onOpenLink: inTauri ? openUrl : (url) => { window.open(url, '_blank', 'noopener,noreferrer') },
+  onReady: () => {
   editorIsReady = true
   editorValue = getMarkdown()
   savedEditorValue = editorValue

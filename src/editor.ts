@@ -3,11 +3,14 @@ import 'vditor/dist/index.css'
 import { installDetailsFolding } from './details'
 import { installLocalImageRenderer } from './images'
 import { clipboardImageMime, rtfClipboardImages, type ClipboardImage } from './clipboard-images'
+import { installContextMenu } from './context-menu'
+import { safeMarkdownForSelection, selectedTextForFormatting } from './context-format'
 
 let vditor: Vditor | null = null
 let resetDetailsFolding = () => {}
 let imageRenderer: ReturnType<typeof installLocalImageRenderer> | null = null
 let removeImagePaste = () => {}
+let removeContextMenu = () => {}
 
 export type InsertPastedImages = (paths: (string | null)[]) => boolean
 
@@ -30,6 +33,101 @@ function currentMarkdownImageSources(container: HTMLElement): ReadonlyMap<HTMLIm
   return sources
 }
 
+function currentLinkSource(container: HTMLElement, link: HTMLElement): string | undefined {
+  const direct = link.getAttribute('href') ?? (link.dataset.type === 'a'
+    ? link.querySelector('.vditor-ir__marker--link')?.textContent : undefined)
+  if (direct) return direct
+  if (link.dataset.type !== 'link-ref' || !vditor?.vditor?.lute) return undefined
+  const label = Array.from(link.children).find((child) => !child.classList.contains('vditor-ir__marker'))?.textContent
+  if (!label) return undefined
+  const template = document.createElement('template')
+  template.innerHTML = vditor.vditor.lute.Md2HTML(vditor.getValue())
+  const anchors = Array.from(template.content.querySelectorAll<HTMLAnchorElement>('a'))
+    .filter((anchor) => !anchor.classList.contains('vditor-footnotes__goto-ref') && !anchor.closest('sup.footnotes-ref'))
+  const nodes = Array.from(container.querySelectorAll<HTMLElement>('.vditor-ir__node[data-type="a"], .vditor-ir__node[data-type="link-ref"]'))
+  const visibleLabel = (node: HTMLElement) => node.dataset.type === 'a'
+    ? node.querySelector('.vditor-ir__link')?.textContent
+    : Array.from(node.children).find((child) => !child.classList.contains('vditor-ir__marker'))?.textContent
+  const index = nodes.indexOf(link)
+  if (index >= 0 && nodes.length === anchors.length
+    && nodes.every((node, position) => visibleLabel(node) === anchors[position].textContent)) {
+    return anchors[index].getAttribute('href') ?? undefined
+  }
+  const matches = anchors
+    .filter((candidate) => candidate.textContent === label && candidate.hasAttribute('href'))
+  const destinations = new Set(matches.map((candidate) => candidate.getAttribute('href')))
+  return destinations.size === 1 && container.contains(link) ? matches[0].getAttribute('href') ?? undefined : undefined
+}
+
+function applyContextFormat(action: string, range: Range): void {
+  const toolbar = vditor?.vditor?.toolbar?.elements
+  if (!toolbar) return
+  const element = range.startContainer.nodeType === Node.TEXT_NODE
+    ? range.startContainer.parentElement : range.startContainer as HTMLElement
+  if (!element) return
+  if (action.startsWith('heading-')) {
+    if (element.closest('[data-type="code-block"], [data-type="table"]')) return
+    toolbar.headings?.querySelector<HTMLButtonElement>(`button[data-tag="h${action.slice(-1)}"]`)?.click()
+    return
+  }
+  const button = toolbar[action]?.firstElementChild as HTMLButtonElement | null
+  if (!button) return
+  const selector: Record<string, string> = {
+    bold: '[data-type="strong"]', italic: '[data-type="em"]', strike: '[data-type="s"]',
+    'inline-code': '[data-type="code"]', link: '[data-type="a"]', quote: 'blockquote',
+    list: 'ul > li:not(.vditor-task)', 'ordered-list': 'ol > li', check: 'li.vditor-task',
+  }
+  if (selector[action]) button.classList.toggle('vditor-menu--current', !!element.closest(selector[action]))
+  if (!element.closest('[data-type="code-block"], [data-type="table"]')) {
+    button.classList.remove('vditor-menu--disabled')
+  }
+  let text = selectedTextForFormatting(range)
+  if (text && /[<&]/.test(text) && !button.classList.contains('vditor-menu--current')
+    && !button.classList.contains('vditor-menu--disabled')
+    && ['bold', 'italic', 'strike', 'inline-code', 'link', 'code', 'table'].includes(action)) {
+    const inline: Record<string, string> = {
+      bold: '[data-type="strong"] > strong', italic: '[data-type="em"] > em',
+      strike: '[data-type="s"] > s', 'inline-code': '[data-type="code"] > code',
+    }
+    const inlineSelector = inline[action]
+    if (inlineSelector && /[\r\n]/.test(text)) {
+      throw new Error('请在同一段内选择文字后重试')
+    }
+    if (inlineSelector && (/^\s|\s$/.test(text))) {
+      const start = text.match(/^\s*/)?.[0].length ?? 0
+      const end = text.match(/\s*$/)?.[0].length ?? 0
+      const current = range.startContainer.ownerDocument?.getSelection()
+      if (range.startContainer !== range.endContainer || range.startContainer.nodeType !== Node.TEXT_NODE
+        || !current || start + end >= text.length) {
+        throw new Error('请选中文字并去掉首尾空白后重试')
+      }
+      const adjusted = range.cloneRange()
+      adjusted.setStart(range.startContainer, range.startOffset + start)
+      adjusted.setEnd(range.endContainer, range.endOffset - end)
+      current.removeAllRanges()
+      current.addRange(adjusted)
+      text = text.slice(start, text.length - end)
+    }
+    const markdown = safeMarkdownForSelection(action, text)
+    if (markdown === null) throw new Error('selection cannot be formatted safely')
+    const root = vditor?.vditor?.ir?.element
+    const previous = root && inlineSelector ? new Set(root.querySelectorAll(inlineSelector)) : null
+    vditor?.insertMD(markdown)
+    if (root && previous && inlineSelector) {
+      const inserted = Array.from(root.querySelectorAll(inlineSelector)).filter((node) => !previous.has(node))
+      const current = root.ownerDocument.getSelection()
+      if (inserted.length === 1 && current) {
+        const restored = root.ownerDocument.createRange()
+        restored.selectNodeContents(inserted[0])
+        current.removeAllRanges()
+        current.addRange(restored)
+      }
+    }
+    return
+  }
+  button.click()
+}
+
 export function initEditor(
   container: HTMLElement,
   callbacks: {
@@ -37,10 +135,13 @@ export function initEditor(
     onReady: () => void
     resolveLocalImage?: (documentPath: string, source: string) => Promise<string>
     onPasteImages?: (files: ClipboardImage[], insert: InsertPastedImages, missing: number) => void
+    onOpenLink?: (url: string) => Promise<void> | void
+    onContextMessage?: (message: string) => void
   },
 ): void {
   imageRenderer?.dispose()
   removeImagePaste()
+  removeContextMenu()
   imageRenderer = callbacks.resolveLocalImage
     ? installLocalImageRenderer(container, callbacks.resolveLocalImage, () => currentMarkdownImageSources(container))
     : null
@@ -66,12 +167,23 @@ export function initEditor(
       theme: { current: initialDark ? 'dark' : 'light' },
       hljs: { style: initialDark ? 'github-dark' : 'github' },
     }, // 正文与代码高亮均跟随系统
-    toolbar: [],
+    // Keep Vditor's format commands available to the context menu without
+    // registering its default hotkeys (Ctrl+O belongs to opening a document).
+    toolbar: ['headings', 'bold', 'italic', 'strike', 'inline-code', 'link', 'quote',
+      'list', 'ordered-list', 'check', 'code', 'table', 'line']
+      .map((name) => ({ name, hotkey: '' })),
     input: (value) => callbacks.onInput(value),
     after: () => {
       ready = true
       if (media.matches !== initialDark) applyTheme()
       resetDetailsFolding = installDetailsFolding(container)
+      removeContextMenu = installContextMenu(container, {
+        applyFormat: applyContextFormat,
+        imageSource: (image) => currentMarkdownImageSources(container).get(image),
+        linkSource: (link) => currentLinkSource(container, link),
+        openLink: (url) => callbacks.onOpenLink?.(url),
+        reportError: (message) => callbacks.onContextMessage?.(message),
+      })
       callbacks.onReady()
     },
   })
