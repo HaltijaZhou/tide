@@ -1,3 +1,5 @@
+import { classifyLinkDestination } from './links'
+
 export interface ContextMenuEntry {
   id: string
   label: string
@@ -13,12 +15,9 @@ export interface EditorMenuContext {
   image?: string
 }
 
-export function isSafeExternalLink(value: string): boolean {
-  try {
-    return ['http:', 'https:', 'mailto:'].includes(new URL(value).protocol)
-  } catch {
-    return false
-  }
+/** 右键菜单与 Ctrl+左键共用同一套分类：网站、邮件和本地 Markdown 都可以打开。 */
+export function isOpenableLink(value: string): boolean {
+  return classifyLinkDestination(value).kind !== 'unsupported'
 }
 
 export function placeContextMenu(
@@ -44,7 +43,7 @@ export function buildContextMenu(context: EditorMenuContext): {
     )
   } else if (context.link) {
     entries.push(
-      { id: 'open-link', label: '打开链接', disabled: !isSafeExternalLink(context.link) },
+      { id: 'open-link', label: '打开链接', disabled: !isOpenableLink(context.link) },
       { id: 'copy-link', label: '复制链接地址' },
       { id: 'context-separator', label: '' },
     )

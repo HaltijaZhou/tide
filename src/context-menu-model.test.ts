@@ -30,6 +30,25 @@ it('链接与图片分别出现对应的操作，危险链接不能直接打开'
   expect(image.entries.some((item) => item.id === 'copy-image-source')).toBe(true)
 })
 
+it('本地 Markdown 链接可以直接打开，复制地址始终可用', async () => {
+  const local = buildContextMenu({ hasSelection: false, hasTextSelection: false, link: 'docs/showcase.md' })
+  const parent = buildContextMenu({ hasSelection: false, hasTextSelection: false, link: '../中文%20笔记.MARKDOWN#heading' })
+  const absolute = buildContextMenu({ hasSelection: false, hasTextSelection: false, link: 'C:\\notes\\a.md' })
+
+  for (const menu of [local, parent, absolute]) {
+    expect(menu.entries.find((item) => item.id === 'open-link')?.disabled).not.toBe(true)
+    expect(menu.entries.some((item) => item.id === 'copy-link')).toBe(true)
+  }
+})
+
+it('远程文件、非 Markdown 文件与危险地址仍不能打开', async () => {
+  for (const link of ['file://server/share/a.md', '//server/share/a.md', 'docs/a.pdf', 'data:text/html,x', '#heading']) {
+    const menu = buildContextMenu({ hasSelection: false, hasTextSelection: false, link })
+    expect(menu.entries.find((item) => item.id === 'open-link')?.disabled, link).toBe(true)
+    expect(menu.entries.some((item) => item.id === 'copy-link')).toBe(true)
+  }
+})
+
 it('菜单靠近窗口边缘时自动移入可见区域', async () => {
   expect(placeContextMenu(790, 590, 230, 260, 800, 600)).toEqual({ x: 562, y: 332 })
   expect(placeContextMenu(30, 40, 230, 260, 800, 600)).toEqual({ x: 30, y: 40 })
