@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { open as openFileDialog, save as saveFileDialog, ask } from '@tauri-apps/plugin-dialog'
+import { open as openFileDialog, save as saveFileDialog, ask, message } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { initEditor, setMarkdown, setDocumentPath, focusEditor, getMarkdown, type InsertPastedImages } from './editor'
 import { createSession, type FsAdapter, type OpenedFile } from './file'
@@ -46,6 +46,33 @@ let conflictActive = false
 let fileMissing = false
 let watchFailed = false
 let watchOperation: Promise<void> = Promise.resolve()
+// 关闭提示打开期间为 true：防止连点 X 叠出第二个对话框
+let closingInFlight = false
+
+const CLOSE_SAVE = '保存并退出'
+const CLOSE_DISCARD = '不保存退出'
+type CloseChoice = 'save' | 'discard' | 'cancel'
+
+/**
+ * 三按钮关闭提示。plugin-dialog 的 ask()/confirm() 协议上只有两个按钮，
+ * 所以这里直接用 message() 的 YesNoCancelCustom 变体。
+ * 返回值为按钮文案本身；点对话框的 X、按 Esc、平台返回 'Cancel' 或任何异常都映射为 cancel，
+ * 因此必须显式排除，不能把「不是保存」一律当作「不保存」。
+ */
+async function askCloseChoice(): Promise<CloseChoice> {
+  let answer: string
+  try {
+    answer = await message('有未保存的修改，要保存后退出吗？', {
+      title: 'tide', kind: 'warning',
+      buttons: { yes: CLOSE_SAVE, no: CLOSE_DISCARD, cancel: '取消' },
+    })
+  } catch {
+    return 'cancel' // 对话框本身失败时留在窗口，绝不静默退出
+  }
+  if (answer === CLOSE_SAVE) return 'save'
+  if (answer === CLOSE_DISCARD) return 'discard'
+  return 'cancel'
+}
 
 function render() {
   if (conflictActive) return
@@ -69,16 +96,27 @@ function render() {
 }
 
 let autosaveTimer: number | undefined
+// 退出提示期间与点「取消」之后冻结防抖自动保存：否则文档会在用户读提示时被后台写盘、
+// 状态回到 clean，第二次点 X 就会命中「干净直接放行」分支而静默退出。
+// 只有用户重新编辑（onInput）才解除冻结。
+let autosavePaused = false
 let externalCheck: Promise<void> = Promise.resolve()
 let pendingExternalChecks = 0
+
+function scheduleAutosave() {
+  if (autosavePaused) return
+  clearTimeout(autosaveTimer)
+  autosaveTimer = setTimeout(() => void session.save(), 2000) // 防抖 2s
+}
+
 function onInput(markdown: string) {
   if (markdown === editorValue) return
+  autosavePaused = false // 用户重新编辑：恢复自动保存
   editorValue = markdown
   session.edit(markdown === savedEditorValue ? session.getSavedContent() : markdown)
   renderWordCount(markdown)
   if (inTauri && session.getState().path && !conflictActive && !fileMissing && !pendingExternalChecks) {
-    clearTimeout(autosaveTimer)
-    autosaveTimer = setTimeout(() => session.save(), 2000) // 防抖 2s
+    scheduleAutosave()
   }
 }
 
@@ -375,7 +413,7 @@ function queueExternalChange() {
   externalCheck = externalCheck.then(handleExternalChange).finally(() => {
     pendingExternalChecks -= 1
     if (!pendingExternalChecks && !conflictActive && !fileMissing && session.isDirty() && session.getState().path) {
-      autosaveTimer = setTimeout(() => void session.save(), 2000)
+      scheduleAutosave()
     }
   })
 }
@@ -473,6 +511,10 @@ if (inTauri) {
   // 脏状态退出保护
   const win = getCurrentWindow()
   void win.onCloseRequested(async (event) => {
+    if (closingInFlight) {
+      event.preventDefault() // 提示已打开：不叠第二个对话框，也不放行
+      return
+    }
     if (conflictActive) {
       event.preventDefault()
       return
@@ -483,6 +525,11 @@ if (inTauri) {
       waitedForImages = true
       const results = await Promise.all([...pendingImagePastes])
       if (conflictActive || results.some((result) => !result)) return
+    }
+    // 等待图片期间可能有另一个关闭请求已经弹出提示：这里再确认一次，避免叠框
+    if (closingInFlight) {
+      event.preventDefault()
+      return
     }
     // onInput 有 undoDelay 延迟（Vditor 默认 800ms）：敲完立即关窗时 session 可能还没变脏，
     // 用编辑器当前内容与会话内容比对兜底，防止丢最后一秒的输入
@@ -496,13 +543,27 @@ if (inTauri) {
       if (!fileMissing && !session.isDirty()) await win.destroy()
       return
     }
-    const save = await ask('有未保存的修改，保存后退出吗？', {
-      title: 'tide', kind: 'warning', okLabel: '保存并退出', cancelLabel: '取消',
-    })
-    if (save) {
-      await saveCurrent()
-      if (!conflictActive && !fileMissing && session.getState().status === 'clean') await win.destroy()
-      // 保存失败则不退出，留在 error 状态（防抖自动保存会重试）
+    closingInFlight = true
+    autosavePaused = true
+    clearTimeout(autosaveTimer)
+    try {
+      const choice = await askCloseChoice()
+      if (choice === 'discard') {
+        await session.waitForSave()
+        await win.destroy()
+        return
+      }
+      if (choice === 'save') {
+        await saveCurrent()
+        // 保存失败则不退出，留在 error 状态（防抖自动保存会重试）
+        if (!conflictActive && !fileMissing && session.getState().status === 'clean') await win.destroy()
+        return
+      }
+      // choice === 'cancel'：只留在窗口。这里刻意不恢复 autosavePaused，
+      // 否则文档会在 2s 后被后台自动保存悄悄写盘、状态回到 clean，
+      // 第二次点 X 就会直接退出——这正是要修的问题。等用户重新编辑（onInput）再恢复。
+    } finally {
+      closingInFlight = false
     }
   })
   render()

@@ -7,6 +7,7 @@ const app = vi.hoisted(() => ({
   holdWatch: null as Promise<void> | null,
   holdSaveDialog: null as Promise<void> | null,
   holdAsk: null as Promise<void> | null,
+  holdMessage: null as Promise<void> | null,
   holdImage: null as Promise<void> | null,
   failSave: false,
   failImage: false,
@@ -17,8 +18,14 @@ const app = vi.hoisted(() => ({
   failWatch: false,
   invalidUtf8: false,
   savePath: null as string | null,
+  saveDialogCalls: 0,
   confirm: true,
   questions: 0,
+  closeAnswer: '保存并退出' as string,
+  closeQuestions: 0,
+  closeMessage: '',
+  closeButtons: undefined as unknown,
+  failMessage: false,
   editorText: '',
   imageDocumentPath: null as string | null,
   imagePathAtLastRender: null as string | null,
@@ -34,7 +41,7 @@ const app = vi.hoisted(() => ({
   changed: undefined as (() => void) | undefined,
   linkChanged: undefined as (() => void) | undefined,
   watchCount: 0,
-  statusLeft: undefined as { textContent: string; children: { textContent: string; onclick: (() => void) | null }[] } | undefined,
+  statusLeft: undefined as { textContent: string; dataset: Record<string, string>; children: { textContent: string; onclick: (() => void) | null }[] } | undefined,
   statusRight: undefined as { textContent: string } | undefined,
   title: '',
   destroyed: false,
@@ -121,8 +128,20 @@ vi.mock('@tauri-apps/api/webview', () => ({
 }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: async () => null,
-  save: async () => { if (app.holdSaveDialog) await app.holdSaveDialog; return app.savePath },
+  save: async () => {
+    app.saveDialogCalls += 1
+    if (app.holdSaveDialog) await app.holdSaveDialog
+    return app.savePath
+  },
   ask: async () => { app.questions += 1; if (app.holdAsk) await app.holdAsk; return app.confirm },
+  message: async (msg: string, options?: { buttons?: unknown }) => {
+    app.closeQuestions += 1
+    app.closeMessage = msg
+    app.closeButtons = options?.buttons
+    if (app.failMessage) throw 'DIALOG_FAILED'
+    if (app.holdMessage) await app.holdMessage
+    return app.closeAnswer
+  },
 }))
 vi.mock('./editor', () => ({
   initEditor: (_element: unknown, callbacks: { onInput: (value: string) => void; onReady: () => void; onPasteImages?: typeof app.paste; onOpenLink?: typeof app.openLink }) => {
@@ -177,6 +196,7 @@ beforeEach(async () => {
   app.holdWatch = null
   app.holdSaveDialog = null
   app.holdAsk = null
+  app.holdMessage = null
   app.holdImage = null
   app.failImage = false
   app.failImageByte = null
@@ -184,8 +204,14 @@ beforeEach(async () => {
   app.sourceImages = new Map()
   app.imageCounter = 0
   app.savePath = null
+  app.saveDialogCalls = 0
   app.confirm = true
   app.questions = 0
+  app.closeAnswer = '保存并退出'
+  app.closeQuestions = 0
+  app.closeMessage = ''
+  app.closeButtons = undefined
+  app.failMessage = false
   app.editorText = ''
   app.normalizeOnSet = false
   app.deferReady = false
@@ -927,6 +953,172 @@ describe('桌面文件操作', () => {
 
     expect(app.files.get('C:/a.md')).toBe('<非 UTF-8 数据>')
     expect(app.statusLeft!.children.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('关闭与退出提示', () => {
+  /** 忠实模拟 @tauri-apps/api/window 的包装器：handler 返回后若未 preventDefault 就销毁窗口。 */
+  async function closeWithTauriWrapper() {
+    let prevented = false
+    const result = { prevented: false }
+    await app.close!({ preventDefault: () => { prevented = true } })
+    result.prevented = prevented
+    if (!prevented) app.destroyed = true
+    return result
+  }
+
+  it('退出提示提供保存、不保存与取消三个选项', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 修改'
+    app.input!(app.editorText)
+    app.closeAnswer = '取消'
+    await closeWithTauriWrapper()
+
+    expect(app.closeButtons).toEqual({ yes: '保存并退出', no: '不保存退出', cancel: '取消' })
+  })
+
+  it('取消退出后再次关闭仍会提示', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 修改'
+    app.input!(app.editorText)
+    app.closeAnswer = '取消'
+    let release!: () => void
+    app.holdMessage = new Promise<void>((resolve) => { release = resolve })
+    const first = app.close!({ preventDefault: () => {} })
+    await settle()
+    // 用户读提示期间，2s 防抖自动保存不应把文档写盘
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(app.files.get('C:/a.md')).toBe('# 原文')
+
+    release()
+    await first
+    expect(app.destroyed).toBe(false)
+    expect(app.closeQuestions).toBe(1)
+
+    app.holdMessage = null
+    app.closeAnswer = '取消'
+    let prevented = false
+    await app.close!({ preventDefault: () => { prevented = true } })
+
+    expect(prevented).toBe(true)
+    expect(app.destroyed).toBe(false)
+    expect(app.closeQuestions).toBe(2)
+  })
+
+  it('取消后不再输入不会自动保存，重新输入后恢复', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 修改'
+    app.input!(app.editorText)
+    app.closeAnswer = '取消'
+    await closeWithTauriWrapper()
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(app.files.get('C:/a.md')).toBe('# 原文')
+
+    app.editorText = '# 再次修改'
+    app.input!(app.editorText)
+    await vi.advanceTimersByTimeAsync(2100)
+
+    expect(app.files.get('C:/a.md')).toBe('# 再次修改')
+  })
+
+  it('新文件可以选择不保存直接退出', async () => {
+    app.editorText = '# 新内容'
+    app.input!(app.editorText)
+    app.closeAnswer = '不保存退出'
+    const result = await closeWithTauriWrapper()
+
+    expect(result.prevented).toBe(true)
+    expect(app.destroyed).toBe(true)
+    expect(app.files.has('C:/new.md')).toBe(false)
+    expect(app.saveDialogCalls).toBe(0) // 不保存退出不得弹出保存对话框
+  })
+
+  it('新文件选择保存并退出时走保存对话框', async () => {
+    app.savePath = 'C:/new.md'
+    app.editorText = '# 新内容'
+    app.input!(app.editorText)
+    app.closeAnswer = '保存并退出'
+    const result = await closeWithTauriWrapper()
+
+    expect(app.files.get('C:/new.md')).toBe('# 新内容')
+    expect(app.destroyed).toBe(true)
+    expect(result.prevented).toBe(true)
+    expect(app.saveDialogCalls).toBe(1)
+  })
+
+  it('新文件保存对话框被取消时窗口保持打开', async () => {
+    app.savePath = null
+    app.editorText = '# 新内容'
+    app.input!(app.editorText)
+    app.closeAnswer = '保存并退出'
+    const result = await closeWithTauriWrapper()
+
+    expect(app.destroyed).toBe(false)
+    expect(result.prevented).toBe(true)
+    expect(app.files.has('C:/new.md')).toBe(false)
+    expect(app.saveDialogCalls).toBe(1)
+  })
+
+  it('提示期间重复关闭不会叠出第二个对话框', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 修改'
+    app.input!(app.editorText)
+    app.closeAnswer = '取消'
+    let release!: () => void
+    app.holdMessage = new Promise<void>((resolve) => { release = resolve })
+    let prevented1 = false
+    let prevented2 = false
+    const first = app.close!({ preventDefault: () => { prevented1 = true } })
+    await settle()
+    const second = app.close!({ preventDefault: () => { prevented2 = true } })
+    await settle()
+
+    expect(app.closeQuestions).toBe(1)
+    expect(prevented1).toBe(true)
+    expect(prevented2).toBe(true)
+
+    release()
+    await first
+    await second
+  })
+
+  it('保存失败时选择保存并退出不退出窗口', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 修改'
+    app.input!(app.editorText)
+    app.failSave = true
+    app.closeAnswer = '保存并退出'
+    const result = await closeWithTauriWrapper()
+
+    expect(result.prevented).toBe(true)
+    expect(app.destroyed).toBe(false)
+    expect(app.statusLeft!.dataset.status).toBe('error')
+  })
+
+  it('关掉提示对话框等同于取消，不会退出', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 修改'
+    app.input!(app.editorText)
+    // 平台在点 X / 按 Esc 时返回 'Cancel'（未启用自定义按钮时的回落值）
+    app.closeAnswer = 'Cancel'
+    const result = await closeWithTauriWrapper()
+
+    expect(result.prevented).toBe(true)
+    expect(app.destroyed).toBe(false)
+    expect(app.files.get('C:/a.md')).toBe('# 原文')
+  })
+
+  it('提示对话框自身失败时留在窗口而不是静默退出', async () => {
+    await drop('C:/a.md')
+    app.editorText = '# 修改'
+    app.input!(app.editorText)
+    app.failMessage = true
+    const result = await closeWithTauriWrapper()
+
+    expect(result.prevented).toBe(true)
+    expect(app.destroyed).toBe(false)
+    expect(app.files.get('C:/a.md')).toBe('# 原文')
   })
 })
 
