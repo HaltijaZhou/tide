@@ -325,6 +325,26 @@ it('初始化期间主题变化会等编辑器就绪后应用最新配色', asyn
   expect(onReady).toHaveBeenCalledOnce()
 })
 
+it('手动外观控制覆盖系统主题，并在初始化结束后采用最新选择', async () => {
+  vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener: () => {} }) })
+  let dark = false
+  let notify = () => {}
+  const theme = {
+    isDark: () => dark,
+    subscribe: (listener: () => void) => { notify = listener; return () => {} },
+  }
+  const { initEditor } = await import('./editor')
+  initEditor({} as HTMLElement, { onInput: () => {}, onReady: () => {} }, theme)
+  dark = true
+  notify()
+  expect(editor.themes).toEqual([])
+  editor.options[0].after()
+  expect(editor.themes).toEqual([['dark', 'dark', 'github-dark']])
+  dark = false
+  notify()
+  expect(editor.themes[editor.themes.length - 1]).toEqual(['classic', 'light', 'github'])
+})
+
 it('图片粘贴由应用接管，避免默认的 Base64 粘贴', async () => {
   vi.stubGlobal('window', { matchMedia: () => ({ matches: false, addEventListener: () => {} }) })
   const { initEditor } = await import('./editor')

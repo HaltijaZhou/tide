@@ -183,6 +183,7 @@ body {
   border-top: 1px solid var(--tide-border);
   background: var(--tide-canvas);
   color: var(--tide-muted);
+  flex-wrap: wrap;
 }
 
 #status-left {
@@ -196,9 +197,40 @@ body {
 }
 
 #status-right {
-  flex: none;
-  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
+
+.tide-theme-selector {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+#statusbar .tide-theme-option {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tide-muted);
+}
+
+#statusbar .tide-theme-option[aria-pressed='true'] {
+  background: var(--tide-selection);
+  box-shadow: inset 0 -2px var(--tide-accent);
+  color: var(--tide-accent);
+}
+
+#statusbar .tide-theme-option:hover { background: var(--tide-surface-hover); color: var(--tide-accent); }
+#statusbar .tide-theme-option:active { background: var(--tide-selection); }
+#statusbar .tide-theme-option svg { width: 16px; height: 16px; }
 
 #statusbar button {
   min-height: 28px;

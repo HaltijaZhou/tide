@@ -11,11 +11,20 @@ import { initEditor, setMarkdown, setDocumentPath, focusEditor, getMarkdown, typ
 import { createSession, type FsAdapter, type OpenedFile } from './file'
 import { clipboardImageMime, type ClipboardImage } from './clipboard-images'
 import { classifyLinkDestination } from './links'
+import { createThemeController, installThemeControls } from './theme'
 
 const inTauri = '__TAURI_INTERNALS__' in window
 const statusLeft = document.querySelector<HTMLSpanElement>('#status-left')!
 const statusRight = document.querySelector<HTMLSpanElement>('#status-right')!
 const editorEl = document.querySelector<HTMLElement>('#editor')!
+const theme = createThemeController({
+  root: document.documentElement,
+  media: window.matchMedia('(prefers-color-scheme: dark)'),
+  storage: () => window.localStorage,
+  setNativeTheme: inTauri ? (mode) => getCurrentWindow().setTheme(mode) : undefined,
+})
+const themeSelector = document.querySelector<HTMLElement>('#theme-selector')
+if (themeSelector) installThemeControls(themeSelector, theme)
 let resolveEditorReady!: () => void
 const editorReady = new Promise<void>((resolve) => { resolveEditorReady = resolve })
 let editorIsReady = false
@@ -480,7 +489,7 @@ initEditor(editorEl, { onInput, resolveLocalImage: inTauri
   savedEditorValue = editorValue
   resolveEditorReady()
   focusEditor()
-} })
+} }, theme)
 
 if (inTauri) {
   // Ctrl+O 打开 / Ctrl+S 保存

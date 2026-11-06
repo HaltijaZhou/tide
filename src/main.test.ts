@@ -117,6 +117,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
     setTitle: async (title: string) => { app.title = title },
+    setTheme: async () => {},
     onCloseRequested: async (callback: typeof app.close) => { app.close = callback },
     destroy: async () => { app.destroyed = true },
   }),
@@ -166,12 +167,20 @@ class FakeElement {
   dataset: Record<string, string> = {}
   children: FakeElement[] = []
   onclick: (() => void) | null = null
+  attributes: Record<string, string> = {}
+  handlers: Record<string, (event: { preventDefault: () => void }) => void> = {}
   private text = ''
 
   get textContent() { return this.text }
   set textContent(value: string) { this.text = value; this.children = [] }
   append(...children: FakeElement[]) { this.children.push(...children) }
+  querySelectorAll() { return this.children }
+  setAttribute(name: string, value: string) { this.attributes[name] = value }
+  addEventListener(name: string, handler: (event: { preventDefault: () => void }) => void) { this.handlers[name] = handler }
 }
+
+let themeButtons: FakeElement[] = []
+let documentRoot: FakeElement
 
 async function settle() {
   for (let i = 0; i < 20; i += 1) await Promise.resolve()
@@ -229,16 +238,27 @@ beforeEach(async () => {
   const elements = new Map([
     ['#status-left', new FakeElement()],
     ['#status-right', new FakeElement()],
+    ['#theme-selector', new FakeElement()],
     ['#editor', new FakeElement()],
   ])
+  documentRoot = new FakeElement()
+  themeButtons = ['light', 'dark', 'system'].map((choice) => {
+    const button = new FakeElement()
+    button.dataset.themeChoice = choice
+    return button
+  })
+  elements.get('#theme-selector')!.children = themeButtons
   app.statusLeft = elements.get('#status-left')
   app.statusRight = elements.get('#status-right')
   vi.stubGlobal('document', {
+    documentElement: documentRoot,
     querySelector: (selector: string) => elements.get(selector),
     createElement: () => new FakeElement(),
   })
   vi.stubGlobal('window', {
     __TAURI_INTERNALS__: {},
+    matchMedia: () => ({ matches: false, addEventListener: () => {} }),
+    localStorage: { getItem: () => null, setItem: () => {} },
     addEventListener: (_name: string, callback: typeof app.keys) => { app.keys = callback },
   })
   await import('./main')
@@ -251,6 +271,14 @@ afterEach(() => {
 })
 
 describe('桌面文件操作', () => {
+  it('状态栏外观选择保持独立，字数和提示更新不会移除图标', () => {
+    expect(themeButtons.map((button) => button.attributes['aria-pressed'])).toEqual(['false', 'false', 'true'])
+    themeButtons[1].handlers.click({ preventDefault: () => {} })
+    expect(documentRoot.dataset.theme).toBe('dark')
+    app.statusRight!.textContent = '字数 8'
+    expect(themeButtons.map((button) => button.attributes['aria-pressed'])).toEqual(['false', 'true', 'false'])
+  })
+
   it('粘贴图片时保存到文档旁的 images 并插入相对路径', async () => {
     await drop('C:/a.md')
     const image = { type: 'image/png', arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as File
@@ -1279,6 +1307,8 @@ describe('打开链接', () => {
     const opened: string[] = []
     vi.stubGlobal('window', {
       addEventListener: () => {},
+      matchMedia: () => ({ matches: false, addEventListener: () => {} }),
+      localStorage: { getItem: () => null, setItem: () => {} },
       open: (url: string) => { opened.push(url) },
     })
     await import('./main')
