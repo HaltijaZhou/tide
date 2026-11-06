@@ -7,7 +7,13 @@
 
 ## [未发布]
 
-关闭窗口的提示现在始终提供「保存并退出 / 不保存退出 / 取消」三个选项，「取消」之后再次关闭也一定会重新询问。
+## [0.1.6] - 2026-11-06
+
+可以在状态栏选择明暗外观；关闭窗口时也能明确选择保存、放弃或取消。
+
+### 新增
+
+- 状态栏提供浅色、深色和跟随系统的外观切换，选择会保存在本机
 
 ### 修复
 
@@ -161,6 +167,7 @@
 - 完全离线可用：Vditor 的 Lute 引擎、图标与主题 CSS 全部本地化，不依赖 CDN
 - GitHub Actions 构建与发布流水线，产出 NSIS 与 MSI 安装包
 
+[0.1.6]: https://github.com/HaltijaZhou/tide/compare/v0.1.5...v0.1.6
 [0.1.4]: https://github.com/HaltijaZhou/tide/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/zhouhaltija/tide/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/zhouhaltija/tide/compare/v0.1.1...v0.1.2

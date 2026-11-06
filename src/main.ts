@@ -11,11 +11,38 @@ import { initEditor, setMarkdown, setDocumentPath, focusEditor, getMarkdown, typ
 import { createSession, type FsAdapter, type OpenedFile } from './file'
 import { clipboardImageMime, type ClipboardImage } from './clipboard-images'
 import { classifyLinkDestination } from './links'
+import { createThemeController, installThemeControls, THEME_STORAGE_KEY } from './theme'
 
 const inTauri = '__TAURI_INTERNALS__' in window
 const statusLeft = document.querySelector<HTMLSpanElement>('#status-left')!
 const statusRight = document.querySelector<HTMLSpanElement>('#status-right')!
 const editorEl = document.querySelector<HTMLElement>('#editor')!
+const nativeWindow = inTauri ? getCurrentWindow() : null
+const useNativeSystemTheme = !!nativeWindow && /Windows/i.test(window.navigator.userAgent)
+let nativeThemeEventsReady = false
+const theme = createThemeController({
+  root: document.documentElement,
+  media: window.matchMedia('(prefers-color-scheme: dark)'),
+  storage: () => window.localStorage,
+  setNativeTheme: nativeWindow ? (mode) => nativeWindow.setTheme(mode) : undefined,
+  getNativeTheme: useNativeSystemTheme ? () => {
+    if (!nativeThemeEventsReady) return Promise.resolve(null)
+    return nativeWindow!.theme()
+  } : undefined,
+})
+if (useNativeSystemTheme && nativeWindow) {
+  void nativeWindow.onThemeChanged(({ payload }) => theme.setSystemTheme(payload)).then(() => {
+    nativeThemeEventsReady = true
+    theme.refreshSystemTheme()
+  }).catch(() => { /* Continue with the browser's system theme. */ })
+}
+window.addEventListener('storage', (event) => {
+  if (event.key !== THEME_STORAGE_KEY && event.key !== null) return
+  try { if (event.storageArea !== window.localStorage) return } catch { return }
+  theme.refreshPreference()
+})
+const themeSelector = document.querySelector<HTMLElement>('#theme-selector')
+if (themeSelector) installThemeControls(themeSelector, theme)
 let resolveEditorReady!: () => void
 const editorReady = new Promise<void>((resolve) => { resolveEditorReady = resolve })
 let editorIsReady = false
@@ -480,7 +507,7 @@ initEditor(editorEl, { onInput, resolveLocalImage: inTauri
   savedEditorValue = editorValue
   resolveEditorReady()
   focusEditor()
-} })
+} }, theme)
 
 if (inTauri) {
   // Ctrl+O 打开 / Ctrl+S 保存

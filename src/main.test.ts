@@ -40,6 +40,10 @@ const app = vi.hoisted(() => ({
   keys: undefined as ((event: { ctrlKey: boolean; metaKey: boolean; key: string; preventDefault: () => void }) => void) | undefined,
   changed: undefined as (() => void) | undefined,
   linkChanged: undefined as (() => void) | undefined,
+  themeStorage: new Map<string, string>(),
+  storageArea: undefined as unknown,
+  storageChanged: undefined as ((event: { key: string | null; storageArea: unknown }) => void) | undefined,
+  nativeThemeChanged: undefined as ((event: { payload: 'light' | 'dark' }) => void) | undefined,
   watchCount: 0,
   statusLeft: undefined as { textContent: string; dataset: Record<string, string>; children: { textContent: string; onclick: (() => void) | null }[] } | undefined,
   statusRight: undefined as { textContent: string } | undefined,
@@ -117,6 +121,9 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
     setTitle: async (title: string) => { app.title = title },
+    setTheme: async () => {},
+    theme: async () => 'light',
+    onThemeChanged: async (callback: typeof app.nativeThemeChanged) => { app.nativeThemeChanged = callback; return () => {} },
     onCloseRequested: async (callback: typeof app.close) => { app.close = callback },
     destroy: async () => { app.destroyed = true },
   }),
@@ -166,12 +173,20 @@ class FakeElement {
   dataset: Record<string, string> = {}
   children: FakeElement[] = []
   onclick: (() => void) | null = null
+  attributes: Record<string, string> = {}
+  handlers: Record<string, (event: { preventDefault: () => void }) => void> = {}
   private text = ''
 
   get textContent() { return this.text }
   set textContent(value: string) { this.text = value; this.children = [] }
   append(...children: FakeElement[]) { this.children.push(...children) }
+  querySelectorAll() { return this.children }
+  setAttribute(name: string, value: string) { this.attributes[name] = value }
+  addEventListener(name: string, handler: (event: { preventDefault: () => void }) => void) { this.handlers[name] = handler }
 }
+
+let themeButtons: FakeElement[] = []
+let documentRoot: FakeElement
 
 async function settle() {
   for (let i = 0; i < 20; i += 1) await Promise.resolve()
@@ -226,20 +241,43 @@ beforeEach(async () => {
   app.resolveCalls = []
   app.holdResolve = null
   app.failResolve = null
+  app.themeStorage = new Map()
+  app.storageChanged = undefined
+  app.nativeThemeChanged = undefined
   const elements = new Map([
     ['#status-left', new FakeElement()],
     ['#status-right', new FakeElement()],
+    ['#theme-selector', new FakeElement()],
     ['#editor', new FakeElement()],
   ])
+  documentRoot = new FakeElement()
+  themeButtons = ['light', 'dark', 'system'].map((choice) => {
+    const button = new FakeElement()
+    button.dataset.themeChoice = choice
+    return button
+  })
+  elements.get('#theme-selector')!.children = themeButtons
   app.statusLeft = elements.get('#status-left')
   app.statusRight = elements.get('#status-right')
   vi.stubGlobal('document', {
+    documentElement: documentRoot,
     querySelector: (selector: string) => elements.get(selector),
     createElement: () => new FakeElement(),
   })
+  const localStorage = {
+    getItem: (key: string) => app.themeStorage.get(key) ?? null,
+    setItem: (key: string, value: string) => { app.themeStorage.set(key, value) },
+  }
+  app.storageArea = localStorage
   vi.stubGlobal('window', {
     __TAURI_INTERNALS__: {},
-    addEventListener: (_name: string, callback: typeof app.keys) => { app.keys = callback },
+    matchMedia: () => ({ matches: false, addEventListener: () => {} }),
+    localStorage,
+    navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+    addEventListener: (name: string, callback: unknown) => {
+      if (name === 'keydown') app.keys = callback as typeof app.keys
+      if (name === 'storage') app.storageChanged = callback as typeof app.storageChanged
+    },
   })
   await import('./main')
 })
@@ -251,6 +289,32 @@ afterEach(() => {
 })
 
 describe('桌面文件操作', () => {
+  it('状态栏外观选择保持独立，字数和提示更新不会移除图标', () => {
+    expect(themeButtons.map((button) => button.attributes['aria-pressed'])).toEqual(['false', 'false', 'true'])
+    themeButtons[1].handlers.click({ preventDefault: () => {} })
+    expect(documentRoot.dataset.theme).toBe('dark')
+    app.statusRight!.textContent = '字数 8'
+    expect(themeButtons.map((button) => button.attributes['aria-pressed'])).toEqual(['false', 'true', 'false'])
+  })
+
+  it('跨窗口偏好更新与 Windows 原生主题事件同步到状态栏和页面', async () => {
+    expect(app.storageChanged).toBeDefined()
+    app.themeStorage.set('tide-theme-preference', 'dark')
+    app.storageChanged!({ key: 'other-key', storageArea: app.storageArea })
+    app.storageChanged!({ key: 'tide-theme-preference', storageArea: {} })
+    expect(themeButtons[2].attributes['aria-pressed']).toBe('true')
+    app.storageChanged!({ key: 'tide-theme-preference', storageArea: app.storageArea })
+    expect(documentRoot.dataset.theme).toBe('dark')
+    expect(themeButtons[1].attributes['aria-pressed']).toBe('true')
+    app.themeStorage.set('tide-theme-preference', 'system')
+    app.storageChanged!({ key: 'tide-theme-preference', storageArea: app.storageArea })
+    await settle()
+    expect(app.nativeThemeChanged).toBeDefined()
+    app.nativeThemeChanged!({ payload: 'dark' })
+    expect(documentRoot.dataset.theme).toBe('dark')
+    expect(themeButtons[2].attributes['aria-pressed']).toBe('true')
+  })
+
   it('粘贴图片时保存到文档旁的 images 并插入相对路径', async () => {
     await drop('C:/a.md')
     const image = { type: 'image/png', arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as File
@@ -1279,6 +1343,8 @@ describe('打开链接', () => {
     const opened: string[] = []
     vi.stubGlobal('window', {
       addEventListener: () => {},
+      matchMedia: () => ({ matches: false, addEventListener: () => {} }),
+      localStorage: { getItem: () => null, setItem: () => {} },
       open: (url: string) => { opened.push(url) },
     })
     await import('./main')

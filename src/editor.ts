@@ -6,6 +6,7 @@ import { clipboardImageMime, rtfClipboardImages, type ClipboardImage } from './c
 import { installContextMenu } from './context-menu'
 import { installLinkActivation } from './links'
 import { safeMarkdownForSelection, selectedTextForFormatting } from './context-format'
+import type { ThemeController } from './theme'
 
 let vditor: Vditor | null = null
 let resetDetailsFolding = () => {}
@@ -13,6 +14,7 @@ let imageRenderer: ReturnType<typeof installLocalImageRenderer> | null = null
 let removeImagePaste = () => {}
 let removeContextMenu = () => {}
 let removeLinkActivation = () => {}
+let removeThemeListener = () => {}
 
 export type InsertPastedImages = (paths: (string | null)[]) => boolean
 
@@ -140,23 +142,26 @@ export function initEditor(
     onOpenLink?: (url: string) => Promise<void> | void
     onContextMessage?: (message: string) => void
   },
+  theme?: Pick<ThemeController, 'isDark' | 'subscribe'>,
 ): void {
   imageRenderer?.dispose()
   removeImagePaste()
   removeContextMenu()
   removeLinkActivation()
+  removeThemeListener()
   imageRenderer = callbacks.resolveLocalImage
     ? installLocalImageRenderer(container, callbacks.resolveLocalImage, () => currentMarkdownImageSources(container))
     : null
-  const media = window.matchMedia('(prefers-color-scheme: dark)')
-  const initialDark = media.matches
+  const media = theme ? null : window.matchMedia('(prefers-color-scheme: dark)')
+  const isDark = () => theme ? theme.isDark() : media!.matches
+  const initialDark = isDark()
   let ready = false
   const applyTheme = () => {
     if (!ready) return
     vditor?.setTheme(
-      media.matches ? 'dark' : 'classic',
-      media.matches ? 'dark' : 'light',
-      media.matches ? 'github-dark' : 'github',
+      isDark() ? 'dark' : 'classic',
+      isDark() ? 'dark' : 'light',
+      isDark() ? 'github-dark' : 'github',
     )
   }
   vditor = new Vditor(container, {
@@ -181,7 +186,7 @@ export function initEditor(
     input: (value) => callbacks.onInput(value),
     after: () => {
       ready = true
-      if (media.matches !== initialDark) applyTheme()
+      if (isDark() !== initialDark) applyTheme()
       resetDetailsFolding = installDetailsFolding(container)
       removeLinkActivation = installLinkActivation(container,
         (link) => currentLinkSource(container, link),
@@ -320,7 +325,12 @@ export function initEditor(
     removeImagePaste = () => container.removeEventListener('paste', onPaste, true)
   }
   // 运行时同时切换外壳、正文和代码高亮，避免暗色背景中出现亮色代码块。
-  media.addEventListener('change', applyTheme)
+  if (theme) {
+    removeThemeListener = theme.subscribe(applyTheme)
+  } else if (media) {
+    media.addEventListener('change', applyTheme)
+    removeThemeListener = () => media.removeEventListener?.('change', applyTheme)
+  }
 }
 
 export function getMarkdown(): string {
