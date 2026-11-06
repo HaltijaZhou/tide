@@ -40,6 +40,10 @@ const app = vi.hoisted(() => ({
   keys: undefined as ((event: { ctrlKey: boolean; metaKey: boolean; key: string; preventDefault: () => void }) => void) | undefined,
   changed: undefined as (() => void) | undefined,
   linkChanged: undefined as (() => void) | undefined,
+  themeStorage: new Map<string, string>(),
+  storageArea: undefined as unknown,
+  storageChanged: undefined as ((event: { key: string | null; storageArea: unknown }) => void) | undefined,
+  nativeThemeChanged: undefined as ((event: { payload: 'light' | 'dark' }) => void) | undefined,
   watchCount: 0,
   statusLeft: undefined as { textContent: string; dataset: Record<string, string>; children: { textContent: string; onclick: (() => void) | null }[] } | undefined,
   statusRight: undefined as { textContent: string } | undefined,
@@ -118,6 +122,8 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
     setTitle: async (title: string) => { app.title = title },
     setTheme: async () => {},
+    theme: async () => 'light',
+    onThemeChanged: async (callback: typeof app.nativeThemeChanged) => { app.nativeThemeChanged = callback; return () => {} },
     onCloseRequested: async (callback: typeof app.close) => { app.close = callback },
     destroy: async () => { app.destroyed = true },
   }),
@@ -235,6 +241,9 @@ beforeEach(async () => {
   app.resolveCalls = []
   app.holdResolve = null
   app.failResolve = null
+  app.themeStorage = new Map()
+  app.storageChanged = undefined
+  app.nativeThemeChanged = undefined
   const elements = new Map([
     ['#status-left', new FakeElement()],
     ['#status-right', new FakeElement()],
@@ -255,11 +264,20 @@ beforeEach(async () => {
     querySelector: (selector: string) => elements.get(selector),
     createElement: () => new FakeElement(),
   })
+  const localStorage = {
+    getItem: (key: string) => app.themeStorage.get(key) ?? null,
+    setItem: (key: string, value: string) => { app.themeStorage.set(key, value) },
+  }
+  app.storageArea = localStorage
   vi.stubGlobal('window', {
     __TAURI_INTERNALS__: {},
     matchMedia: () => ({ matches: false, addEventListener: () => {} }),
-    localStorage: { getItem: () => null, setItem: () => {} },
-    addEventListener: (_name: string, callback: typeof app.keys) => { app.keys = callback },
+    localStorage,
+    navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+    addEventListener: (name: string, callback: unknown) => {
+      if (name === 'keydown') app.keys = callback as typeof app.keys
+      if (name === 'storage') app.storageChanged = callback as typeof app.storageChanged
+    },
   })
   await import('./main')
 })
@@ -277,6 +295,24 @@ describe('桌面文件操作', () => {
     expect(documentRoot.dataset.theme).toBe('dark')
     app.statusRight!.textContent = '字数 8'
     expect(themeButtons.map((button) => button.attributes['aria-pressed'])).toEqual(['false', 'true', 'false'])
+  })
+
+  it('跨窗口偏好更新与 Windows 原生主题事件同步到状态栏和页面', async () => {
+    expect(app.storageChanged).toBeDefined()
+    app.themeStorage.set('tide-theme-preference', 'dark')
+    app.storageChanged!({ key: 'other-key', storageArea: app.storageArea })
+    app.storageChanged!({ key: 'tide-theme-preference', storageArea: {} })
+    expect(themeButtons[2].attributes['aria-pressed']).toBe('true')
+    app.storageChanged!({ key: 'tide-theme-preference', storageArea: app.storageArea })
+    expect(documentRoot.dataset.theme).toBe('dark')
+    expect(themeButtons[1].attributes['aria-pressed']).toBe('true')
+    app.themeStorage.set('tide-theme-preference', 'system')
+    app.storageChanged!({ key: 'tide-theme-preference', storageArea: app.storageArea })
+    await settle()
+    expect(app.nativeThemeChanged).toBeDefined()
+    app.nativeThemeChanged!({ payload: 'dark' })
+    expect(documentRoot.dataset.theme).toBe('dark')
+    expect(themeButtons[2].attributes['aria-pressed']).toBe('true')
   })
 
   it('粘贴图片时保存到文档旁的 images 并插入相对路径', async () => {

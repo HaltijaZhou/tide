@@ -53,6 +53,103 @@ describe('外观控制器', () => {
     expect(onChange).toHaveBeenCalled()
   })
 
+  it('其他窗口更新偏好后重新读取最新存储值，不重复写入', () => {
+    const env = environment(null, false)
+    const write = vi.spyOn(env.storage, 'setItem')
+    const first = createThemeController({ ...env, storage: () => env.storage })
+    const otherRoot = { dataset: {} as Record<string, string> }
+    const second = createThemeController({ ...env, root: otherRoot, storage: () => env.storage })
+    first.setPreference('dark')
+    second.refreshPreference()
+    expect(second.getPreference()).toBe('dark')
+    expect(otherRoot.dataset.theme).toBe('dark')
+    expect(write).toHaveBeenCalledTimes(1)
+    first.setPreference('light')
+    second.refreshPreference()
+    expect(second.getPreference()).toBe('light')
+    expect(otherRoot.dataset.theme).toBe('light')
+    expect(write).toHaveBeenCalledTimes(2)
+  })
+
+  it('桌面系统模式使用窗口原生主题，忽略其他窗口改变的 WebView 配色', async () => {
+    const env = environment(null, false)
+    const getNativeTheme = vi.fn().mockResolvedValue('dark')
+    const theme = createThemeController({
+      ...env, storage: () => env.storage,
+      setNativeTheme: async () => {}, getNativeTheme,
+    })
+    await vi.waitFor(() => expect(theme.isDark()).toBe(true))
+    env.setSystemDark(false)
+    expect(theme.isDark()).toBe(true)
+    theme.setSystemTheme('light')
+    expect(theme.isDark()).toBe(false)
+    env.setSystemDark(true)
+    expect(theme.isDark()).toBe(false)
+  })
+
+  it('迟到的原生主题查询不覆盖后续手动选择', async () => {
+    const env = environment(null, false)
+    let resolve!: (value: 'light' | 'dark') => void
+    const nativeResult = new Promise<'light' | 'dark'>((done) => { resolve = done })
+    const getNativeTheme = vi.fn().mockReturnValue(nativeResult)
+    const theme = createThemeController({
+      ...env, storage: () => env.storage,
+      setNativeTheme: async () => {}, getNativeTheme,
+    })
+    await vi.waitFor(() => expect(getNativeTheme).toHaveBeenCalled())
+    theme.setPreference('dark')
+    resolve('light')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(theme.getPreference()).toBe('dark')
+    expect(theme.isDark()).toBe(true)
+  })
+
+  it('较早发出的原生查询不会覆盖随后收到的系统主题事件', async () => {
+    const env = environment(null, false)
+    let resolve!: (value: 'light' | 'dark') => void
+    const getNativeTheme = vi.fn().mockReturnValue(new Promise<'light' | 'dark'>((done) => { resolve = done }))
+    const theme = createThemeController({
+      ...env, storage: () => env.storage, setNativeTheme: async () => {}, getNativeTheme,
+    })
+    await vi.waitFor(() => expect(getNativeTheme).toHaveBeenCalled())
+    theme.setSystemTheme('dark')
+    resolve('light')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(theme.isDark()).toBe(true)
+  })
+
+  it('较早的原生查询迟到时不覆盖更新的查询结果', async () => {
+    const env = environment(null, false)
+    let finishFirst!: (value: 'light' | 'dark') => void
+    let finishSecond!: (value: 'light' | 'dark') => void
+    const getNativeTheme = vi.fn()
+      .mockReturnValueOnce(new Promise<'light' | 'dark'>((done) => { finishFirst = done }))
+      .mockReturnValueOnce(new Promise<'light' | 'dark'>((done) => { finishSecond = done }))
+    const theme = createThemeController({
+      ...env, storage: () => env.storage, setNativeTheme: async () => {}, getNativeTheme,
+    })
+    await vi.waitFor(() => expect(getNativeTheme).toHaveBeenCalledTimes(1))
+    theme.refreshSystemTheme()
+    finishSecond('dark')
+    await Promise.resolve()
+    finishFirst('light')
+    await Promise.resolve()
+    expect(theme.isDark()).toBe(true)
+  })
+
+  it('原生系统主题查询迟迟不返回时，后续手动选择仍能同步到窗口', async () => {
+    const env = environment(null, false)
+    const getNativeTheme = vi.fn().mockReturnValue(new Promise(() => {}))
+    const setNativeTheme = vi.fn().mockResolvedValue(undefined)
+    const theme = createThemeController({ ...env, storage: () => env.storage, setNativeTheme, getNativeTheme })
+    await vi.waitFor(() => expect(getNativeTheme).toHaveBeenCalled())
+    theme.setPreference('dark')
+    await vi.waitFor(() => expect(setNativeTheme.mock.calls).toEqual([[null], ['dark']]))
+    expect(theme.isDark()).toBe(true)
+  })
+
   it('读取或写入存储失败时仍可在本次运行内切换', () => {
     const env = environment(null, true)
     const theme = createThemeController({ ...env, storage: () => { throw new Error('unavailable') } })
