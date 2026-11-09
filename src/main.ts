@@ -11,12 +11,26 @@ import { initEditor, setMarkdown, setDocumentPath, focusEditor, getMarkdown, typ
 import { createSession, type FsAdapter, type OpenedFile } from './file'
 import { clipboardImageMime, type ClipboardImage } from './clipboard-images'
 import { classifyLinkDestination } from './links'
+import { bindMeasureControl } from './measure'
 import { createThemeController, installThemeControls, THEME_STORAGE_KEY } from './theme'
 
 const inTauri = '__TAURI_INTERNALS__' in window
 const statusLeft = document.querySelector<HTMLSpanElement>('#status-left')!
 const statusRight = document.querySelector<HTMLSpanElement>('#status-right')!
 const editorEl = document.querySelector<HTMLElement>('#editor')!
+const measureInput = document.querySelector<HTMLInputElement>('#measure-input')
+const measureOutput = document.querySelector<HTMLOutputElement>('#measure-output')
+const measureFit = document.querySelector<HTMLButtonElement>('#measure-fit')
+if (measureInput && measureOutput && measureFit) {
+  bindMeasureControl({
+    root: document.documentElement,
+    input: measureInput,
+    output: measureOutput,
+    fit: measureFit,
+    editor: editorEl,
+    storage: window.localStorage,
+  })
+}
 const nativeWindow = inTauri ? getCurrentWindow() : null
 const useNativeSystemTheme = !!nativeWindow && /Windows/i.test(window.navigator.userAgent)
 let nativeThemeEventsReady = false

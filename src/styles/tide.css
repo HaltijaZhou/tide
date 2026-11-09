@@ -69,7 +69,7 @@ body {
   color: var(--tide-ink);
   font-family: var(--tide-font);
   caret-color: var(--tide-accent);
-  padding: 48px max(52px, calc((100% - 720px) / 2)) 96px !important;
+  padding: 48px max(52px, calc((100% - var(--tide-measure, 720px)) / 2)) 96px !important;
 }
 
 #editor .vditor-reset h1,
@@ -200,6 +200,28 @@ body {
   flex: 0 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.tide-measure {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.tide-measure-input {
+  width: 112px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--tide-accent);
+  cursor: pointer;
+}
+
+.tide-measure-output {
+  min-width: 4.75em;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .tide-theme-selector {

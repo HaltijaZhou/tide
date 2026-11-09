@@ -175,6 +175,10 @@ class FakeElement {
   onclick: (() => void) | null = null
   attributes: Record<string, string> = {}
   handlers: Record<string, (event: { preventDefault: () => void }) => void> = {}
+  value = ''
+  clientWidth = 0
+  styleProps = new Map<string, string>()
+  style = { setProperty: (name: string, value: string) => { this.styleProps.set(name, value) } }
   private text = ''
 
   get textContent() { return this.text }
@@ -187,6 +191,10 @@ class FakeElement {
 
 let themeButtons: FakeElement[] = []
 let documentRoot: FakeElement
+let measureInput: FakeElement
+let measureOutput: FakeElement
+let measureFit: FakeElement
+let editorElement: FakeElement
 
 async function settle() {
   for (let i = 0; i < 20; i += 1) await Promise.resolve()
@@ -257,6 +265,13 @@ beforeEach(async () => {
     return button
   })
   elements.get('#theme-selector')!.children = themeButtons
+  measureInput = new FakeElement()
+  measureOutput = new FakeElement()
+  measureFit = new FakeElement()
+  elements.set('#measure-input', measureInput)
+  elements.set('#measure-output', measureOutput)
+  elements.set('#measure-fit', measureFit)
+  editorElement = elements.get('#editor')!
   app.statusLeft = elements.get('#status-left')
   app.statusRight = elements.get('#status-right')
   vi.stubGlobal('document', {
@@ -286,6 +301,42 @@ afterEach(() => {
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.unstubAllGlobals()
+})
+
+describe('正文栏宽', () => {
+  it('打开时按默认栏宽设置滑块、读数和变量', () => {
+    expect(measureInput.value).toBe('720')
+    expect(measureOutput.textContent).toBe('720 px')
+    expect(documentRoot.styleProps.get('--tide-measure')).toBe('720px')
+  })
+
+  it('拖动滑块后立刻改栏宽并记住', () => {
+    expect(measureInput.handlers.input).toBeTypeOf('function')
+    measureInput.value = '900'
+    measureInput.handlers.input({ preventDefault() {} })
+    expect(measureOutput.textContent).toBe('900 px')
+    expect(documentRoot.styleProps.get('--tide-measure')).toBe('900px')
+    expect(app.themeStorage.get('tide-measure')).toBe('900')
+  })
+
+  it('点适应窗口后按当前编辑区铺满，并记住', () => {
+    expect(measureFit.handlers.click).toBeTypeOf('function')
+    editorElement.clientWidth = 904
+    measureFit.handlers.click({ preventDefault() {} })
+    expect(measureInput.value).toBe('800')
+    expect(measureOutput.textContent).toBe('800 px')
+    expect(documentRoot.styleProps.get('--tide-measure')).toBe('800px')
+    expect(app.themeStorage.get('tide-measure')).toBe('800')
+  })
+
+  it('打开时恢复上次栏宽', async () => {
+    vi.resetModules()
+    app.themeStorage.set('tide-measure', '800')
+    await import('./main')
+    expect(measureInput.value).toBe('800')
+    expect(measureOutput.textContent).toBe('800 px')
+    expect(documentRoot.styleProps.get('--tide-measure')).toBe('800px')
+  })
 })
 
 describe('桌面文件操作', () => {
