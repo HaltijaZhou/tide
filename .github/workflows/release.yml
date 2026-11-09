@@ -53,7 +53,7 @@ jobs:
             *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      # 防止 tag 与实际版本号不一致，打出一个版本号错误的安装包
+      # 防止 tag 与实际版本号不一致，打出版本号错误的发布产物
       - name: 校验版本号与 tag 一致
         shell: bash
         env:
@@ -87,7 +87,17 @@ jobs:
       - name: 安装前端依赖
         run: npm ci
 
-      - name: 打包并发布
+      # tauri-action 会扫描已有的 bundle 文件，先清理缓存中可能残留的旧安装包。
+      - name: 清理旧打包产物
+        shell: pwsh
+        run: |
+          $bundleDir = Join-Path $env:GITHUB_WORKSPACE 'src-tauri/target/release/bundle'
+          if (Test-Path -LiteralPath $bundleDir) {
+            Remove-Item -LiteralPath $bundleDir -Recurse -Force
+          }
+
+      - name: 构建并发布便携版
+        id: portable
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -96,8 +106,17 @@ jobs:
           releaseName: 'tide ${{ steps.meta.outputs.tag }}'
           releaseDraft: false
           prerelease: ${{ steps.meta.outputs.prerelease }}
-          # MSI(WiX) 要求预发布标识必须是纯数字且 ≤65535，rc.1 这类版本打不出来，
-          # 所以预发布只出 NSIS；正式版才同时出 NSIS + MSI
-          args: ${{ steps.meta.outputs.prerelease == 'true' && '--bundles nsis' || '' }}
+          args: --no-bundle
+          uploadPlainBinary: true
+          releaseAssetNamePattern: '[mainBinaryName]_[version]_[arch]-portable[ext]'
           releaseBody: |
             轻量级单文件 Markdown 编辑器，Typora 式即编即显，完全离线可用。
+
+      - name: 构建并发布 NSIS 安装包
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ steps.portable.outputs.releaseId }}
+          tagName: ${{ steps.meta.outputs.tag }}
+          args: --bundles nsis

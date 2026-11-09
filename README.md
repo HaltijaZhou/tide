@@ -29,6 +29,15 @@
 - **明暗主题**：状态栏可选浅色、深色或跟随系统，选择会保存在本机
 - **正文栏宽**：状态栏滑块调整正文宽度，也可按当前窗口适应；选择保存在本机
 
+## 下载与使用
+
+Windows 版在 [Releases](../../releases) 提供两种下载：
+
+- `tide_<版本>_x64-setup.exe`：安装版，可注册 Markdown 文件关联。
+- `tide_<版本>_x64-portable.exe`：单文件便携版，下载后直接运行，无需安装；主题和正文栏宽等偏好仍保存在当前电脑上，不会随程序文件携带。
+
+便携版需要系统已安装 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)；Windows 11 通常已自带，缺少时请先安装。安装版会在需要时处理该依赖。
+
 ## 技术栈
 
 - [Tauri 2](https://tauri.app/)（桌面框架）
